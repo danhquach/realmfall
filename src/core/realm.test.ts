@@ -3,7 +3,11 @@ import { createRng } from './rng.ts';
 import {
   RESOURCES,
   SOLDIER,
+  STATS,
   STOREHOUSE,
+  TIER_INFO,
+  TRAIT_INFO,
+  TRAITS,
   armyPower,
   assign,
   attack,
@@ -18,27 +22,36 @@ import {
   growRivals,
   disband,
   forgeBonus,
+  gainTrait,
   housingCap,
   pay,
   population,
   rates,
+  rivalTraits,
   rivalView,
   safeAmounts,
   scout,
+  sellDuplicate,
   shortfall,
+  slotTrait,
   startingRivals,
   storeCaps,
   storehouseLevel,
+  swapCost,
   tick,
+  traitModifiers,
+  traitUpgradeCost,
   train,
   tribute,
   unassign,
   upgradeCost,
   upgradeStorehouse,
+  upgradeTrait,
   winChance,
   YEAR_SECONDS,
   type Building,
   type Realm,
+  type Trait,
 } from './realm.ts';
 
 describe('rates', () => {
@@ -99,7 +112,8 @@ describe('createRealm', () => {
     expect(realm.year).toBe(1);
     expect(realm.buildings).toEqual({ hut: 0, market: 0, forge: 0 });
     expect(realm.rivals.map((r) => r.power)).toEqual([20, 45, 90]);
-    expect(realm.traits).toEqual([]);
+    expect(realm.traits).toEqual({});
+    expect(realm.slots).toEqual([null, null, null]);
     expect(realm.chronicle).toEqual([]);
   });
 
@@ -112,7 +126,8 @@ describe('createRealm', () => {
     const a = createRealm(1);
     a.rivals.push({
       name: 'X',
-      trait: 'stoneHalls',
+      ring: 1,
+      trait: 'timberClans',
       power: 1,
       hostile: true,
       scouted: false,
@@ -136,7 +151,8 @@ describe('tick purity and time', () => {
   it('leaves a populated input untouched', () => {
     const realm = {
       ...createRealm(3),
-      traits: ['horseLords' as const],
+      traits: { horseLords: { level: 2, duplicates: 1 } },
+      slots: ['horseLords' as const, null, null],
       chronicle: [{ year: 1, text: 'A reign begins.' }],
     };
     const before = structuredClone(realm);
@@ -869,18 +885,25 @@ describe('rivals', () => {
     const rng = createRng(3);
     const taken = new Set<string>();
     for (let i = 0; i < 300; i++) {
-      const { name } = createRival(rng, 1, taken);
+      const { name } = createRival(rng, 1, 1, taken);
       expect(taken.has(name)).toBe(false);
       taken.add(name);
     }
   });
 
-  it('gives each rival a place name only, no ruler, and a design trait', () => {
+  it('gives each rival a place name only, no ruler, and a trait of its ring', () => {
     for (let seed = 0; seed < 200; seed++) {
       for (const r of startingRivals(seed)) {
         expect(r.name).toMatch(/^[A-Z][a-z]+$/);
-        expect(Object.keys(r).sort()).toEqual(['hostile', 'name', 'power', 'scouted', 'trait']);
-        expect(r.trait).not.toBe('stoneHalls');
+        expect(Object.keys(r).sort()).toEqual([
+          'hostile',
+          'name',
+          'power',
+          'ring',
+          'scouted',
+          'trait',
+        ]);
+        expect(rivalTraits(r.ring)).toContain(r.trait);
       }
     }
   });
@@ -889,7 +912,7 @@ describe('rivals', () => {
     const rng = createRng(8);
     const n = 10_000;
     let hostile = 0;
-    for (let i = 0; i < n; i++) if (createRival(rng, 1, new Set()).hostile) hostile++;
+    for (let i = 0; i < n; i++) if (createRival(rng, 1, 1, new Set()).hostile) hostile++;
     expect(hostile / n).toBeCloseTo(RIVAL.hostileChance, 1);
   });
 
@@ -1141,14 +1164,14 @@ describe('battle and annexation (design §7)', () => {
   });
 
   it('annexation adds 10 housing, ⌊E / 8⌋ people, E gold and the trait', () => {
-    const realm = { ...armed(40, 45), traits: [] };
+    const realm = armed(40, 45);
     const before = structuredClone(realm);
     const next = attack(realm, 0, WIN);
     expect(next.annexedHousing).toBe(10);
     expect(housingCap(next)).toBe(housingCap(realm) + 10);
     expect(next.idle).toBe(realm.idle + 5);
     expect(next.stores.gold).toBe(95);
-    expect(next.traits).toEqual([realm.rivals[0]!.trait]);
+    expect(next.traits).toEqual({ [realm.rivals[0]!.trait]: { level: 1, duplicates: 0 } });
     expect(next.rivals.map((r) => r.name)).not.toContain(realm.rivals[0]!.name);
     expect(realm).toEqual(before);
   });
@@ -1170,10 +1193,16 @@ describe('battle and annexation (design §7)', () => {
     expect(attack(full, 0, WIN).idle).toBe(full.idle + 10);
   });
 
-  it('does not add a trait the realm already owns', () => {
+  it('annexing a trait the realm already owns gives a duplicate', () => {
     const realm = armed(40, 20);
-    const owned = { ...realm, traits: [realm.rivals[0]!.trait] };
-    expect(attack(owned, 0, WIN).traits).toEqual(owned.traits);
+    const trait = realm.rivals[0]!.trait;
+    const owned = { ...realm, traits: { [trait]: { level: 2, duplicates: 1 } } };
+    expect(attack(owned, 0, WIN).traits).toEqual({ [trait]: { level: 2, duplicates: 2 } });
+  });
+
+  it('places the new rival one ring past the farthest', () => {
+    const realm = armed(200, 20);
+    expect(attack(realm, 0, WIN).rivals[2]!.ring).toBe(3);
   });
 
   it('replaces the annexed rival with a new one at 1.5× the strongest', () => {
@@ -1204,5 +1233,324 @@ describe('battle and annexation (design §7)', () => {
     expect(attack(empty, 0, WIN)).toBe(empty);
     const realm = armed(10, 10);
     for (const i of [-1, 3, 0.5, NaN]) expect(attack(realm, i, WIN)).toBe(realm);
+  });
+});
+
+describe('traits (design §9)', () => {
+  /** A working realm (4 farmers, 2 woodcutters, 2 miners, 2 soldiers) owning `owned` at their levels, `slotted` in slots. */
+  const withTraits = (
+    owned: Partial<Record<Trait, number>>,
+    slotted: Trait[] = Object.keys(owned) as Trait[],
+  ): Realm => {
+    const realm = createRealm(4);
+    const traits: Realm['traits'] = {};
+    for (const t of TRAITS) if (owned[t]) traits[t] = { level: owned[t], duplicates: 0 };
+    return {
+      ...realm,
+      idle: 0,
+      jobs: { farmer: 4, woodcutter: 2, miner: 2 },
+      soldiers: 2,
+      traits,
+      slots: [0, 1, 2].map((i) => slotted[i] ?? null),
+    };
+  };
+  const base = withTraits({});
+  const baseRates = rates(base);
+  const basePower = armyPower(base);
+  // Base per-second output: food 4 × 1.5, wood 2 × 0.8, iron 2 × 0.4, tax 8 × 0.25, upkeep 2 × 0.5.
+  const made = { food: 6, wood: 1.6, iron: 0.8, tax: 2, upkeep: 1 };
+
+  describe('each trait while slotted', () => {
+    it('Fertile valleys: farmer output +50%, miner output −25%', () => {
+      const r = rates(withTraits({ fertileValleys: 1 }));
+      expect(r.food).toBeCloseTo(baseRates.food + made.food * 0.5);
+      expect(r.iron).toBeCloseTo(made.iron * 0.75);
+      expect(r.wood).toBeCloseTo(baseRates.wood);
+      expect(r.gold).toBeCloseTo(baseRates.gold);
+    });
+
+    it('Timber clans: woodcutter output +75%, farmer output −20%', () => {
+      const r = rates(withTraits({ timberClans: 1 }));
+      expect(r.wood).toBeCloseTo(made.wood * 1.75);
+      expect(r.food).toBeCloseTo(baseRates.food - made.food * 0.2);
+      expect(r.iron).toBeCloseTo(baseRates.iron);
+    });
+
+    it('Dwarven smiths: miner output +100%, woodcutter output −25%', () => {
+      const r = rates(withTraits({ dwarvenSmiths: 1 }));
+      expect(r.iron).toBeCloseTo(made.iron * 2);
+      expect(r.wood).toBeCloseTo(made.wood * 0.75);
+      expect(r.food).toBeCloseTo(baseRates.food);
+    });
+
+    it('Merchant guilds: tax +50%, soldier gold upkeep +25%', () => {
+      const r = rates(withTraits({ merchantGuilds: 1 }));
+      expect(r.gold).toBeCloseTo(made.tax * 1.5 - made.upkeep * 1.25);
+      expect(r.food).toBeCloseTo(baseRates.food);
+    });
+
+    it('Poison archers: archers +50% power, spearmen −20% power', () => {
+      const realm = withTraits({ poisonArchers: 1 });
+      expect(traitModifiers(realm).archers).toBeCloseTo(0.5);
+      expect(traitModifiers(realm).spearmen).toBeCloseTo(-0.2);
+      expect(armyPower(realm)).toBeCloseTo(basePower * 0.8);
+    });
+
+    it('Horse lords: cavalry +50% power and −25% march, cavalry upkeep +50%; spearmen untouched', () => {
+      const realm = withTraits({ horseLords: 1 });
+      const m = traitModifiers(realm);
+      expect([m.cavalry, m.march, m.cavalryUpkeep]).toEqual([0.5, -0.25, 0.5]);
+      expect(armyPower(realm)).toBeCloseTo(basePower);
+      expect(rates(realm)).toEqual(baseRates);
+    });
+
+    it('Warrior creed: army power +30%', () => {
+      expect(armyPower(withTraits({ warriorCreed: 1 }))).toBeCloseTo(basePower * 1.3);
+    });
+
+    it('Warrior creed: no growth while at peace with every rival', () => {
+      const room = { ...withTraits({ warriorCreed: 1 }), annexedHousing: 20 };
+      const peace = { ...room, rivals: room.rivals.map((r) => ({ ...r, hostile: false })) };
+      expect(tick(peace, 4).idle).toBe(0);
+      expect(tick(peace, 4).growth).toBe(0);
+      const war = { ...peace, rivals: peace.rivals.map((r, i) => ({ ...r, hostile: i === 0 })) };
+      expect(tick(war, 4).idle).toBe(1);
+    });
+
+    it('Golden age: all production and tax +25%', () => {
+      const r = rates(withTraits({ goldenAge: 1 }));
+      expect(r.food).toBeCloseTo(baseRates.food + made.food * 0.25);
+      expect(r.wood).toBeCloseTo(made.wood * 1.25);
+      expect(r.iron).toBeCloseTo(made.iron * 1.25);
+      expect(r.gold).toBeCloseTo(made.tax * 1.25 - made.upkeep);
+    });
+
+    it('Golden age: rivals gain +6% power per year instead of +4%', () => {
+      const realm = withTraits({ goldenAge: 1 });
+      const grown = growRivals(realm).rivals.map((r) => r.power);
+      expect(grown).toEqual(realm.rivals.map((r) => expect.closeTo(r.power * 1.06)));
+    });
+
+    it('starvation shortfall counts the farmer modifier', () => {
+      // 4 farmers make 6 food/s, 12 people eat 6 food/s: fed. −20% output: 1.2 short of 6.
+      const empty = { ...base, idle: 4, soldiers: 0, stores: { ...base.stores, food: 0 } };
+      expect(shortfall(empty)).toBe(0);
+      expect(
+        shortfall({
+          ...empty,
+          traits: { timberClans: { level: 1, duplicates: 0 } },
+          slots: ['timberClans', null, null],
+        }),
+      ).toBeCloseTo(0.2);
+    });
+  });
+
+  it('owned but unslotted traits do nothing', () => {
+    const owned = Object.fromEntries(TRAITS.map((t) => [t, 5]));
+    const realm = withTraits(owned, []);
+    expect(Object.values(traitModifiers(realm)).every((v) => v === 0)).toBe(true);
+    expect(rates(realm)).toEqual(baseRates);
+    expect(armyPower(realm)).toBe(basePower);
+    const calm = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: false })) };
+    const calmBase = { ...base, rivals: calm.rivals };
+    expect(growRivals(calm).rivals).toEqual(growRivals(calmBase).rivals);
+    expect(tick({ ...calm, annexedHousing: 20 }, 4).idle).toBe(1);
+  });
+
+  it('modifiers on the same stat add up: +50% and −20% make +30%', () => {
+    const realm = withTraits({ fertileValleys: 1, timberClans: 1 });
+    expect(traitModifiers(realm).farmer).toBeCloseTo(0.3);
+    expect(rates(realm).food).toBeCloseTo(baseRates.food + made.food * 0.3);
+    // A unit bonus and the army bonus add up for that unit: −20% + 30%.
+    expect(armyPower(withTraits({ poisonArchers: 1, warriorCreed: 1 }))).toBeCloseTo(
+      basePower * 1.1,
+    );
+  });
+
+  describe('upgrades', () => {
+    it('cost 2ⁿ⁻¹ duplicates per level: 1, 2, 4, 8', () => {
+      expect([1, 2, 3, 4].map(traitUpgradeCost)).toEqual([1, 2, 4, 8]);
+      let realm: Realm = { ...createRealm(1), traits: { goldenAge: { level: 1, duplicates: 15 } } };
+      for (let i = 0; i < 4; i++) realm = upgradeTrait(realm, 'goldenAge');
+      expect(realm.traits.goldenAge).toEqual({ level: 5, duplicates: 0 });
+    });
+
+    it('needs enough duplicates and stops at level 5', () => {
+      const short = { ...createRealm(1), traits: { goldenAge: { level: 2, duplicates: 1 } } };
+      expect(upgradeTrait(short, 'goldenAge')).toBe(short);
+      const top = { ...createRealm(1), traits: { goldenAge: { level: 5, duplicates: 99 } } };
+      expect(upgradeTrait(top, 'goldenAge')).toBe(top);
+      expect(upgradeTrait(createRealm(1), 'goldenAge').traits).toEqual({});
+    });
+
+    it('each level adds +25% of the upside; level 5 is 2×, the downside stays', () => {
+      for (const t of TRAITS) {
+        const { upside, downside } = TRAIT_INFO[t];
+        for (const level of [1, 3, 5]) {
+          const m = traitModifiers(withTraits({ [t]: level }));
+          const by = 1 + 0.25 * (level - 1);
+          for (const s of STATS)
+            expect(m[s]).toBeCloseTo((upside[s] ?? 0) * by + (downside[s] ?? 0));
+        }
+      }
+      const r = rates(withTraits({ fertileValleys: 5 }));
+      expect(r.food).toBeCloseTo(baseRates.food + made.food * 1);
+      expect(r.iron).toBeCloseTo(made.iron * 0.75);
+    });
+  });
+
+  describe('slots', () => {
+    const owning = (gold: number): Realm => ({
+      ...withTraits({ fertileValleys: 1, timberClans: 1, dwarvenSmiths: 1, goldenAge: 1 }, []),
+      stores: { ...base.stores, gold },
+    });
+
+    it('fills an empty slot for free', () => {
+      const next = slotTrait(owning(0), 1, 'goldenAge');
+      expect(next.slots).toEqual([null, 'goldenAge', null]);
+      expect(next.stores.gold).toBe(0);
+    });
+
+    it('a swap costs 5 × population gold and cools the slot for 5 years', () => {
+      const realm = slotTrait(owning(200), 0, 'fertileValleys');
+      expect(swapCost(realm)).toEqual({ gold: 50 });
+      const swapped = slotTrait(realm, 0, 'timberClans');
+      expect(swapped.slots[0]).toBe('timberClans');
+      expect(swapped.stores.gold).toBe(150);
+      expect(slotTrait(swapped, 0, 'fertileValleys')).toBe(swapped);
+      const year5 = { ...swapped, year: 5 };
+      expect(slotTrait(year5, 0, 'fertileValleys')).toBe(year5);
+      const year6 = slotTrait({ ...swapped, year: 6 }, 0, 'fertileValleys');
+      expect(year6.slots[0]).toBe('fertileValleys');
+      expect(year6.stores.gold).toBe(100);
+    });
+
+    it('the cooldown holds only that slot', () => {
+      let realm = slotTrait(slotTrait(owning(200), 0, 'fertileValleys'), 1, 'timberClans');
+      realm = slotTrait(realm, 0, 'dwarvenSmiths');
+      expect(slotTrait(realm, 1, 'goldenAge').slots).toEqual(['dwarvenSmiths', 'goldenAge', null]);
+    });
+
+    it('a swap needs the gold', () => {
+      const realm = slotTrait(owning(49), 0, 'fertileValleys');
+      expect(slotTrait(realm, 0, 'timberClans')).toBe(realm);
+    });
+
+    it('a fourth slot is impossible', () => {
+      let realm = owning(0);
+      realm = slotTrait(
+        slotTrait(slotTrait(realm, 0, 'fertileValleys'), 1, 'timberClans'),
+        2,
+        'dwarvenSmiths',
+      );
+      for (const i of [3, -1, 0.5, NaN]) expect(slotTrait(realm, i, 'goldenAge')).toBe(realm);
+      expect(realm.slots).toHaveLength(3);
+    });
+
+    it('rejects an unowned or already slotted trait', () => {
+      const realm = slotTrait(owning(500), 0, 'fertileValleys');
+      expect(slotTrait(realm, 1, 'horseLords')).toBe(realm);
+      expect(slotTrait(realm, 1, 'fertileValleys')).toBe(realm);
+      expect(slotTrait(realm, 0, 'fertileValleys')).toBe(realm);
+    });
+  });
+
+  describe('duplicates', () => {
+    it('gaining an owned trait gives a duplicate', () => {
+      const once = gainTrait(createRealm(1), 'horseLords');
+      expect(once.traits.horseLords).toEqual({ level: 1, duplicates: 0 });
+      expect(gainTrait(once, 'horseLords').traits.horseLords).toEqual({ level: 1, duplicates: 1 });
+    });
+
+    it('a duplicate sells for its tier price', () => {
+      for (const t of TRAITS) {
+        const realm = {
+          ...createRealm(1),
+          storehouse: 3,
+          traits: { [t]: { level: 1, duplicates: 2 } },
+        };
+        const next = sellDuplicate(realm, t);
+        expect(next.stores.gold).toBe(40 + TIER_INFO[TRAIT_INFO[t].tier].sellGold);
+        expect(next.traits[t]).toEqual({ level: 1, duplicates: 1 });
+      }
+      expect(Object.values(TIER_INFO).map((i) => i.sellGold)).toEqual([40, 75, 150, 300, 600]);
+    });
+
+    it('the sale is capped by the gold store cap', () => {
+      const realm = {
+        ...createRealm(1),
+        stores: { ...createRealm(1).stores, gold: 140 },
+        traits: { goldenAge: { level: 1, duplicates: 1 } },
+      };
+      const next = sellDuplicate(realm, 'goldenAge');
+      expect(next.stores.gold).toBe(storeCaps(realm).gold);
+      expect(next.traits.goldenAge!.duplicates).toBe(0);
+    });
+
+    it('needs a duplicate to sell', () => {
+      const realm = { ...createRealm(1), traits: { goldenAge: { level: 1, duplicates: 0 } } };
+      expect(sellDuplicate(realm, 'goldenAge')).toBe(realm);
+      expect(sellDuplicate(createRealm(1), 'goldenAge').stores.gold).toBe(40);
+    });
+  });
+
+  it('every gain, slot, swap, upgrade and sale writes a Chronicle line', () => {
+    let realm: Realm = { ...createRealm(1), year: 3 };
+    realm = gainTrait(realm, 'fertileValleys');
+    realm = gainTrait(realm, 'fertileValleys');
+    realm = gainTrait(realm, 'fertileValleys');
+    realm = gainTrait(realm, 'goldenAge');
+    realm = slotTrait(realm, 0, 'fertileValleys');
+    realm = upgradeTrait(realm, 'fertileValleys');
+    realm = sellDuplicate(realm, 'fertileValleys');
+    realm = slotTrait(realm, 0, 'goldenAge');
+    expect(realm.chronicle).toEqual([
+      { year: 3, text: 'Gained the trait Fertile valleys (Common).' },
+      { year: 3, text: 'Gained a duplicate of Fertile valleys (Common).' },
+      { year: 3, text: 'Gained a duplicate of Fertile valleys (Common).' },
+      { year: 3, text: 'Gained the trait Golden age (Mythic).' },
+      { year: 3, text: 'Slotted Fertile valleys (Common).' },
+      { year: 3, text: 'Raised Fertile valleys (Common) to level 2.' },
+      { year: 3, text: 'Sold a duplicate of Fertile valleys (Common) for 40 gold.' },
+      { year: 3, text: 'Swapped Fertile valleys (Common) for Golden age (Mythic) for 50 gold.' },
+    ]);
+  });
+
+  it('trait actions leave their input untouched', () => {
+    const realm = {
+      ...withTraits({ fertileValleys: 1, goldenAge: 1 }, ['fertileValleys']),
+      stores: { ...base.stores, gold: 100 },
+    };
+    realm.traits.goldenAge!.duplicates = 3;
+    const before = structuredClone(realm);
+    gainTrait(realm, 'goldenAge');
+    slotTrait(realm, 1, 'goldenAge');
+    slotTrait(realm, 0, 'goldenAge');
+    upgradeTrait(realm, 'goldenAge');
+    sellDuplicate(realm, 'goldenAge');
+    expect(realm).toEqual(before);
+  });
+
+  describe('rival traits by ring', () => {
+    it('unlocks each tier from its ring', () => {
+      expect(rivalTraits(1)).toEqual(['fertileValleys', 'timberClans']);
+      expect(rivalTraits(2)).toHaveLength(4);
+      expect(rivalTraits(3)).toHaveLength(6);
+      expect(rivalTraits(5)).toHaveLength(7);
+      expect(rivalTraits(6)).toEqual([...TRAITS]);
+    });
+
+    it('rivals draw only from tiers unlocked at their ring', () => {
+      const rng = createRng(21);
+      for (let ring = 1; ring <= 7; ring++) {
+        const seen = new Set<Trait>();
+        for (let i = 0; i < 400; i++) seen.add(createRival(rng, 1, ring, new Set()).trait);
+        expect([...seen].sort()).toEqual(rivalTraits(ring).sort());
+      }
+    });
+
+    it('starting rivals sit on rings 1, 1 and 2', () => {
+      expect(startingRivals(9).map((r) => r.ring)).toEqual([1, 1, 2]);
+    });
   });
 });
