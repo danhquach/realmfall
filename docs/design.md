@@ -84,9 +84,9 @@ it empties.
 - **Shortfall:** while food is at 0, shortfall s = (food eaten − food produced)
   ÷ food eaten, per second. If production covers consumption, s = 0 and no one
   is hungry.
-- **People leave:** hunger builds at s per second; each 2 points of hunger, one
-  person leaves. At s = 1 (no food at all) that is one person every 2 s; at
-  s = 0.1, one every 20 s. Hunger resets to 0 once food is above 0 again.
+- **People leave:** hunger builds at s per second; each 4 points of hunger, one
+  person leaves. At s = 1 (no food at all) that is one person every 4 s; at
+  s = 0.1, one every 40 s. Hunger resets to 0 once food is above 0 again.
 - **Who leaves first:** idle peasants, then miners, woodcutters and farmers (in
   that order, so farmers stay longest), then soldiers.
 - **Penalty:** while s > 0, wood, iron and tax are multiplied by (1 − s), and
