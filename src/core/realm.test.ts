@@ -33,6 +33,7 @@ import {
   unassign,
   upgradeCost,
   upgradeStorehouse,
+  YEAR_SECONDS,
   type Building,
   type Realm,
 } from './realm.ts';
@@ -896,6 +897,73 @@ describe('rivals', () => {
     expect(next.rivals.map((r) => r.power)).toEqual([20, 45, 90].map((p) => p * 1.04 * 1.04));
     expect(next.rivals.map((r) => r.name)).toEqual(realm.rivals.map((r) => r.name));
     expect(realm).toEqual(before);
+  });
+});
+
+describe('years (design §10)', () => {
+  const powers = (realm: Realm) => realm.rivals.map((r) => r.power);
+  const grown = (years: number) => [20, 45, 90].map((p) => p * 1.04 ** years);
+
+  it('is 8 s of game time', () => {
+    expect(YEAR_SECONDS).toBe(8);
+  });
+
+  it('advances exactly once per 8 s in fixed steps', () => {
+    let realm = createRealm(1);
+    const seen: number[] = [];
+    for (let i = 1; i <= 96; i++) {
+      realm = tick(realm, 0.25);
+      seen.push(realm.year);
+    }
+    // Steps 1–31 are year 1; step 32 lands on 8 s and starts year 2, and so on.
+    expect(seen.slice(0, 31).every((y) => y === 1)).toBe(true);
+    expect(seen[31]).toBe(2);
+    expect(seen[63]).toBe(3);
+    expect(seen[95]).toBe(4);
+    expect(realm.year).toBe(4);
+  });
+
+  it('stays in year 1 until 8 s have passed', () => {
+    expect(tick(createRealm(1), 7.99).year).toBe(1);
+    expect(tick(createRealm(1), 8).year).toBe(2);
+  });
+
+  it('advances every year passed in one large dt', () => {
+    const realm = tick(createRealm(1), 8 * 25 + 3);
+    expect(realm.year).toBe(26);
+    expect(tick(realm, 5).year).toBe(27);
+  });
+
+  it('grows rivals once per year passed, across one large dt', () => {
+    const next = tick(createRealm(5), 8 * 10);
+    expect(next.year).toBe(11);
+    powers(next).forEach((p, i) => expect(p).toBeCloseTo(grown(10)[i]!, 9));
+  });
+
+  it('grows rivals once per year in fixed steps, and not between years', () => {
+    let realm = createRealm(5);
+    for (let i = 0; i < 31; i++) realm = tick(realm, 0.25);
+    expect(powers(realm)).toEqual([20, 45, 90]);
+    realm = tick(realm, 0.25);
+    expect(powers(realm)).toEqual(grown(1));
+    for (let i = 0; i < 31; i++) realm = tick(realm, 0.25);
+    expect(powers(realm)).toEqual(grown(1));
+  });
+
+  it('gives the same years and rival powers however time is sliced', () => {
+    let small = createRealm(9);
+    for (let i = 0; i < 400; i++) small = tick(small, 0.25);
+    const big = tick(createRealm(9), 100);
+    expect(small.year).toBe(13);
+    expect(big.year).toBe(13);
+    powers(small).forEach((p, i) => expect(p).toBeCloseTo(powers(big)[i]!, 9));
+  });
+
+  it('runs no yearly hooks for a zero or negative dt', () => {
+    const realm = createRealm(2);
+    expect(tick(realm, 0).year).toBe(1);
+    expect(tick(realm, -100).year).toBe(1);
+    expect(powers(tick(realm, -100))).toEqual([20, 45, 90]);
   });
 });
 

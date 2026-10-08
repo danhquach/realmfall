@@ -86,6 +86,9 @@ export const PEOPLE = {
   desertEvery: 2,
 } as const;
 
+/** Game seconds per year (docs/design.md §10). */
+export const YEAR_SECONDS = 8;
+
 /** The starting state (docs/design.md §3). */
 export function createRealm(seed: number): Realm {
   return {
@@ -481,6 +484,9 @@ function loseOne(realm: Realm): Realm {
  * idle peasant arrives per 4 s banked. The bank empties whenever either
  * condition fails, so a freshly opened house waits a full 4 s. Rates are
  * fixed for the whole step, so keep `dt` small (the loop uses STEP).
+ *
+ * Years (§10): year n begins at (n − 1) × 8 s of game time. Every year passed
+ * in the step, however large `dt` is, runs the yearly hooks once (rival growth, §7).
  */
 export function tick(realm: Realm, dt: number): Realm {
   const r = rates(realm);
@@ -515,5 +521,8 @@ export function tick(realm: Realm, dt: number): Realm {
     desertion -= PEOPLE.desertEvery;
   }
 
-  return { ...next, hunger, soldiers, desertion };
+  next = { ...next, hunger, soldiers, desertion };
+  const year = 1 + Math.floor(next.time / YEAR_SECONDS);
+  while (next.year < year) next = { ...growRivals(next), year: next.year + 1 };
+  return next;
 }
