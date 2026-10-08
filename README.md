@@ -6,7 +6,17 @@ you take changes how yours plays.
 
 ## Status
 
-Concept stage. No code yet.
+In development. The core simulation is in (jobs, growth, buildings, storehouses,
+starvation, soldiers, rival generation), but the page only shows a resource
+readout for now.
+
+- **Test it:** <https://danhquach.github.io/realmfall/>, redeployed from `main`
+  on every merge.
+- **First playable build:** arrives with
+  [RF-040 Realm panels (#18)](https://github.com/danhquach/realmfall/issues/18),
+  where you can assign jobs, build and watch the rates change in the browser.
+- **First full build** (world map, rivals, battles, save and offline progress;
+  design §15) comes after the rest of the Phase 1 tickets.
 
 ## Core loop
 
