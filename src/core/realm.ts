@@ -60,6 +60,8 @@ export interface Realm {
   /** Seconds banked toward the next deserter while gold is at 0 (docs/design.md §6). */
   desertion: number;
   buildings: Record<Building, number>;
+  /** Storehouse level, from 0 (docs/design.md §5). */
+  storehouse: number;
   rivals: Rival[];
   traits: Trait[];
   chronicle: ChronicleEntry[];
@@ -101,10 +103,98 @@ export function createRealm(seed: number): Realm {
     soldiers: 0,
     desertion: 0,
     buildings: { hut: 0, market: 0, forge: 0 },
+    storehouse: 0,
     rivals: [],
     traits: [],
     chronicle: [],
   };
+}
+
+/** An amount of each store; resources left out cost nothing. */
+export type Cost = Partial<Record<Resource, number>>;
+
+interface StorehouseLevel {
+  caps: Record<Resource, number>;
+  safe: Record<Resource, number>;
+  /** What it costs to reach this level from the one below. */
+  cost: Cost;
+}
+
+/** Storehouse levels 0–3 (docs/design.md §5). */
+export const STOREHOUSE: readonly StorehouseLevel[] = [
+  {
+    caps: { food: 200, wood: 200, iron: 50, gold: 150 },
+    safe: { food: 0, wood: 0, iron: 0, gold: 0 },
+    cost: {},
+  },
+  {
+    caps: { food: 500, wood: 600, iron: 120, gold: 400 },
+    safe: { food: 50, wood: 60, iron: 12, gold: 40 },
+    cost: { wood: 60 },
+  },
+  {
+    caps: { food: 1500, wood: 2000, iron: 400, gold: 1200 },
+    safe: { food: 200, wood: 250, iron: 50, gold: 150 },
+    cost: { wood: 200, iron: 30 },
+  },
+  {
+    caps: { food: 5000, wood: 6000, iron: 1200, gold: 4000 },
+    safe: { food: 750, wood: 900, iron: 180, gold: 600 },
+    cost: { wood: 600, iron: 120, gold: 100 },
+  },
+];
+
+/** Each level past the table multiplies the previous one's caps, safe amounts and cost by this. */
+export const STOREHOUSE_GROWTH = 3;
+
+function scale<T extends Cost>(amounts: T, by: number): T {
+  const out: Cost = {};
+  for (const k of RESOURCES) if (amounts[k] !== undefined) out[k] = amounts[k] * by;
+  return out as T;
+}
+
+/** Caps, safe amounts and upgrade cost of Storehouse `level`; past level 3 each step is ×3. */
+export function storehouseLevel(level: number): StorehouseLevel {
+  const top = STOREHOUSE.length - 1;
+  if (level <= top) return STOREHOUSE[level]!;
+  const base = STOREHOUSE[top]!;
+  const by = STOREHOUSE_GROWTH ** (level - top);
+  return { caps: scale(base.caps, by), safe: scale(base.safe, by), cost: scale(base.cost, by) };
+}
+
+/** The most each store can hold (§3). */
+export function storeCaps(realm: Realm): Record<Resource, number> {
+  return storehouseLevel(realm.storehouse).caps;
+}
+
+/** How much of each store a raid can't take (§5, §7). */
+export function safeAmounts(realm: Realm): Record<Resource, number> {
+  return storehouseLevel(realm.storehouse).safe;
+}
+
+/** What the next Storehouse level costs. */
+export function upgradeCost(realm: Realm): Cost {
+  return storehouseLevel(realm.storehouse + 1).cost;
+}
+
+/** True when every store holds at least its share of `cost`. */
+export function canAfford(realm: Realm, cost: Cost): boolean {
+  return RESOURCES.every((k) => realm.stores[k] >= (cost[k] ?? 0));
+}
+
+/** Takes `cost` from the stores, or returns the realm unchanged if it can't be paid. */
+export function pay(realm: Realm, cost: Cost): Realm {
+  if (!canAfford(realm, cost)) return realm;
+  const stores = { ...realm.stores };
+  for (const k of RESOURCES) stores[k] -= cost[k] ?? 0;
+  return { ...realm, stores };
+}
+
+/** Raises the Storehouse one level if its cost can be paid; otherwise nothing changes. */
+export function upgradeStorehouse(realm: Realm): Realm {
+  const cost = upgradeCost(realm);
+  if (!canAfford(realm, cost)) return realm;
+  return { ...pay(realm, cost), storehouse: realm.storehouse + 1 };
 }
 
 export function workers(realm: Realm): number {
@@ -185,7 +275,7 @@ function loseOne(realm: Realm): Realm {
  * input untouched, so the same function drives live play and offline catch-up.
  * It copies only what it changes and shares the rest with the input, so treat
  * every Realm as immutable: build a new one rather than editing in place.
- * Stores never go below zero.
+ * Stores never go below zero, and anything over a store's cap is lost (§3).
  *
  * Starvation (§4): while food is at 0, hunger builds at s per second and one
  * person leaves per 4 hunger; hunger resets once s is 0 again (food above 0,
@@ -202,8 +292,9 @@ function loseOne(realm: Realm): Realm {
  */
 export function tick(realm: Realm, dt: number): Realm {
   const r = rates(realm);
+  const caps = storeCaps(realm);
   const stores = { ...realm.stores };
-  for (const k of RESOURCES) stores[k] = Math.max(0, stores[k] + r[k] * dt);
+  for (const k of RESOURCES) stores[k] = Math.min(caps[k], Math.max(0, stores[k] + r[k] * dt));
 
   let idle = realm.idle;
   let growth = realm.growth + dt;
