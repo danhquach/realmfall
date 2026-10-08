@@ -26,7 +26,7 @@ readout for now.
   strengthen the army.
 - **Army.** Soldiers come from your peasants, eat more food and cost gold
   upkeep. Every soldier is a worker you no longer have.
-- **Rivals.** Neighbouring kingdoms are generated with a ruler and a trait.
+- **Rivals.** Neighbouring settlements are generated with a name and a trait.
   They grow stronger over time, raid you when you're weak, and can be scouted,
   paid tribute, or attacked.
 - **World map.** A node map of settlements and resource sites joined by roads.
@@ -35,9 +35,7 @@ readout for now.
 - **Conquest.** A won battle annexes the rival: land, people, gold, and its
   trait, which permanently changes your kingdom (e.g. Dwarven smiths double
   mining output).
-- **Succession.** Your ruler ages and dies. The heir inherits a weakened realm
-  plus a dynasty legacy bonus — the prestige reset, told as part of the story.
-- **Chronicle.** A running history of your reign: harvests, plagues, envoys,
+- **Chronicle.** A running history of your realm: harvests, plagues, envoys,
   raids and battles.
 
 ## License

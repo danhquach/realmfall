@@ -9,7 +9,7 @@ haven't been prototyped yet.
 A text-based idle kingdom builder. You start with a handful of peasants and a
 thin granary, grow a realm, and conquer the kingdoms and lands around you. Each
 conquest absorbs the rival's trait, so every realm grows into something
-different. Rulers age and die; their heirs inherit what survives.
+different.
 
 ### Pillars
 
@@ -20,7 +20,7 @@ different. Rulers age and die; their heirs inherit what survives.
 3. **The world pushes back.** Rivals grow while you idle, raid you when you're
    weak, and compete for the same land.
 4. **The story writes itself.** The Chronicle turns the simulation into a
-   history of your dynasty.
+   history of your realm.
 5. **Text first.** Numbers, buttons and prose. The world map is a simple graph
    of named places and roads, not a tile grid.
 
@@ -33,8 +33,8 @@ peasants ─► jobs ─► food / wood / iron / gold ─► buildings + soldier
     └── annexed people, sites, traits ◄── claim sites / conquer rivals on the map
 ```
 
-Over a ruler's life: grow → arm → expand across the map → ruler dies → heir
-inherits a weakened realm with a legacy bonus → repeat, stronger.
+Grow → arm → expand across the map → absorb rivals' traits → push into
+stronger rings, endlessly.
 
 ## 3. Resources
 
@@ -44,8 +44,6 @@ inherits a weakened realm with a legacy bonus → repeat, stronger.
 | Wood | Woodcutters (0.8/s each), Forests | Buildings, archers |
 | Iron | Miners (0.4/s each), Iron mines | Spearmen, cavalry, Forge |
 | Gold | Tax (0.25/s per employed worker), Markets (+1/s each), Gold veins, loot | Soldier upkeep (0.5/s each; cavalry 1/s), training soldiers, buildings, scouting, tribute |
-
-The legacy multiplier (§10) applies to all production, tax included.
 
 Every store has a cap set by the Storehouse level (§5). A store stops filling at
 its cap and anything over it is lost, whatever the source (production, loot,
@@ -60,8 +58,7 @@ Storehouse is upgraded.
 | People | 4 idle, 4 farmers, 2 woodcutters, 0 miners, 0 soldiers |
 | Housing cap | 15 |
 | Store caps | 200 food, 200 wood, 50 iron, 150 gold (Storehouse level 0) |
-| Realm | Hearthmoor, ruled by House Edric |
-| Ruler | Edric, age 45 |
+| Realm | Hearthmoor |
 | Map | Your capital only, nearby places visible |
 
 The opening food balance is +1.0/s on purpose: the first decision is how many
@@ -176,7 +173,7 @@ cavalry at 60 × 0.67 = 40, so you win 69% of the time.
 
 ### Generation
 
-Each rival is a settlement on the map (§8) with a name, a ruler (King/Queen +
+Each rival is a settlement on the map (§8) with a place name (never a person's
 name), one trait (§9), a power value, a stance (hostile / at peace) and whether
 you've scouted it.
 
@@ -192,7 +189,7 @@ You can act on a rival once its settlement is next to your territory on the map.
 
 | Action | Cost | Effect |
 |---|---|---|
-| Scout | 15 gold | Reveals ruler, power, trait and your win chance |
+| Scout | 15 gold | Reveals power, trait and your win chance |
 | Tribute | 30 gold | A hostile rival becomes at peace (until an event changes it) |
 | Attack | — (risks the army) | Battle, see below |
 
@@ -240,7 +237,6 @@ map is also written to the Chronicle.
 | Gold vein | +1.5 gold/s |
 | Horse pasture | Allows cavalry: supports 10 cavalry |
 | Stone quarry | Building costs −10% |
-| Shrine | Ruler lives +5 years |
 
 Each site has a richness of 1–3 that multiplies its bonus. Sites farther from
 your starting capital are richer.
@@ -337,17 +333,12 @@ A conquered rival's trait is added to your kingdom permanently. Traits stack.
 
 The trait pool is the main source of variety and needs to grow (see §13).
 
-## 10. Time and succession
+## 10. Time
 
-- **Year:** 8 s of game time.
-- **Ruler death:** at age 70 (plus any Shrine bonus). The prototype's first
-  ruler starts at 45.
-- **Succession (the prestige reset):**
-  - Food, wood, iron and gold are halved.
-  - Field soldiers are halved. Garrisons are kept.
-  - Buildings, people, traits, sites and conquered land are kept.
-  - Legacy +1, which adds +10% to all production.
-  - The new ruler starts at age 20–29.
+- **Year:** 8 s of game time. Yearly effects (rival growth) apply once per
+  year passed.
+- There are no rulers: ageing and succession are parked as a possible upgrade
+  (§17).
 
 ## 11. Events
 
@@ -364,22 +355,19 @@ One random event every 25 s, written to the Chronicle:
 ## 12. Chronicle
 
 Every meaningful change is written as one line, tagged with the year:
-accessions, buildings raised, scouting reports, sites claimed and lost,
-battles, raids, events, deaths and successions. It's the game's main feedback
-channel and its story.
+buildings raised, scouting reports, sites claimed and lost, battles, raids
+and events. It's the game's main feedback channel and its story.
 
 ## 13. Known issues from the prototype
 
-1. **Succession is weak.** +10% production per heir isn't worth losing half
-   your stores. It needs heir traits, dynasty perks, or a choice of heir.
-2. **Tribute is too cheap.** A one-time 30 gold buys peace until a random
+1. **Tribute is too cheap.** A one-time 30 gold buys peace until a random
    event flips it. Tribute should be ongoing (gold per year).
-3. **Too few traits.** Six traits repeat within a few conquests.
-4. **Time runs too fast.** An 8 s year makes a reign last about 3 minutes at 1×.
-   That's good for testing, too fast for an idle game.
-5. **No offline progress.** Idle games need it; see §14.
-6. **No late-game sink.** Gold and food pile up once the economy is stable.
-7. **The map is untested.** Garrison sizes, site yields, march time and rival
+2. **Too few traits.** Six traits repeat within a few conquests.
+3. **Time runs too fast.** An 8 s year is good for testing, too fast for an
+   idle game.
+4. **No offline progress.** Idle games need it; see §14.
+5. **No late-game sink.** Gold and food pile up once the economy is stable.
+6. **The map is untested.** Garrison sizes, site yields, march time and rival
    expansion rate need a prototype before they can be trusted.
 
 ## 14. Next systems
@@ -392,16 +380,14 @@ Ordered by how much they add to the endless loop:
    online, and write a Chronicle summary.
 2. **Bigger trait pool and trait synergies.** Some pairs of traits combine into
    a stronger effect (e.g. Dwarven smiths + Horse lords → Ironclad cavalry).
-3. **Dynasty perks.** Spend legacy on permanent perks between reigns instead of
-   a flat +10%.
-4. **Research.** Scholars produce research points that unlock techs
+3. **Research.** Scholars produce research points that unlock techs
    (agriculture, warfare, civic). Civic techs upgrade housing: Huts become
    Houses and then Stone houses, each holding more people, and techs such as
    Bunk beds and Insulation add room to every house.
-5. **Citizen tiers.** Peasants → Artisans → Scholars, each needing more goods
+4. **Citizen tiers.** Peasants → Artisans → Scholars, each needing more goods
    and unlocking better jobs.
-6. **Diplomacy.** Alliances, marriages to merge realms, spies.
-7. **Rival behaviour.** Rivals fight each other, ally against you, and have
+5. **Diplomacy.** Alliances, marriages to merge realms, spies.
+6. **Rival behaviour.** Rivals fight each other, ally against you, and have
    personalities (greedy, cautious, zealous).
 
 ## 15. First build scope
@@ -416,3 +402,22 @@ first two rings) plus save and offline progress.
 - Simulation separate from UI: a pure `tick(state, dt)` function, so balance
   can be tested and offline time simulated without rendering.
 - Unit tests on the simulation (Vitest).
+
+## 17. Future upgrades (not planned)
+
+Parked ideas, kept for reference. Not on the roadmap and not in the first
+build; picking one up means designing it here first.
+
+### Ruler ageing and succession (#58)
+
+The prototype's prestige reset:
+
+- The ruler starts at 45, ages one year per game year and dies at 70.
+- Succession halves food, wood, iron, gold and field soldiers. Garrisons,
+  buildings, people, traits, sites and conquered land are kept.
+- Legacy +1 per succession adds +10% to all production, tax included.
+- The heir starts at age 20–29.
+- **Shrine** resource site: ruler lives +5 years. Left out of the site pool
+  until this ships.
+- Known issue: +10% production per heir isn't worth losing half your stores.
+  It needs heir traits, dynasty perks (#37), or a choice of heir.
