@@ -6,6 +6,7 @@ import {
   housingCap,
   population,
   rates,
+  shortfall,
   tick,
   unassign,
   type Realm,
@@ -229,16 +230,22 @@ describe('growth (design §4)', () => {
   });
 
   it('raises the cap by 5 per hut', () => {
-    const realm = { ...createRealm(1), buildings: { hut: 1, market: 0, forge: 0 } };
+    // 9 farmers feed the full 20, so the realm never starves on the way up.
+    const realm = {
+      ...createRealm(1),
+      jobs: { farmer: 9, woodcutter: 2, miner: 0 },
+      buildings: { hut: 1, market: 0, forge: 0 },
+    };
     expect(housingCap(realm)).toBe(20);
     expect(population(run(realm, 100))).toBe(20);
   });
 
   it('needs more than 5 food', () => {
+    // 2 farmers feed 6 civilians exactly: food holds at 5.
     const hungry = {
       ...createRealm(1),
       stores: { food: 5, wood: 0, iron: 0, gold: 0 },
-      jobs: { farmer: 0, woodcutter: 0, miner: 0 },
+      jobs: { farmer: 2, woodcutter: 0, miner: 0 },
     };
     expect(run(hungry, 20).idle).toBe(4);
   });
@@ -286,5 +293,201 @@ describe('growth (design §4)', () => {
 
   it('a single 8 s step adds two peasants', () => {
     expect(tick(createRealm(1), 8).idle).toBe(6);
+  });
+});
+
+describe('starvation (design §4)', () => {
+  const run = (realm: Realm, seconds: number) => {
+    for (let t = 0; t < seconds; t += 0.25) realm = tick(realm, 0.25);
+    return realm;
+  };
+  const empty = { food: 0, wood: 0, iron: 0, gold: 1000 };
+
+  it('s is 0 while any food is left or production covers what is eaten', () => {
+    expect(shortfall(createRealm(1))).toBe(0);
+    const fed = { ...createRealm(1), stores: { ...empty } };
+    expect(shortfall(fed)).toBe(0);
+  });
+
+  it('at s = 1 one person leaves every 4 s', () => {
+    // No farmers: 6 civilians eat 3 food/s and nothing is produced.
+    const starving = {
+      ...createRealm(1),
+      stores: { ...empty },
+      jobs: { farmer: 0, woodcutter: 2, miner: 0 },
+    };
+    expect(shortfall(starving)).toBe(1);
+    expect(population(run(starving, 3.75))).toBe(6);
+    expect(population(run(starving, 4))).toBe(5);
+    expect(population(run(starving, 8))).toBe(4);
+    expect(population(run(starving, 16))).toBe(2);
+  });
+
+  it('at s = 0.1 one person leaves every 40 s', () => {
+    // 10 civilians eat 5 food/s, 3 farmers make 4.5: s = 0.1. Once one leaves, 9 eat 4.5 and s = 0.
+    const short = {
+      ...createRealm(1),
+      stores: { ...empty },
+      idle: 5,
+      jobs: { farmer: 3, woodcutter: 2, miner: 0 },
+    };
+    expect(shortfall(short)).toBeCloseTo(0.1);
+    expect(population(run(short, 39.5))).toBe(10);
+    const after = run(short, 40.25);
+    expect(population(after)).toBe(9);
+    expect(shortfall(after)).toBe(0);
+    expect(population(run(after, 60))).toBe(9);
+  });
+
+  it('loses idle, miners, woodcutters, farmers, then soldiers', () => {
+    let realm: Realm = {
+      ...createRealm(1),
+      stores: { ...empty },
+      idle: 1,
+      jobs: { farmer: 1, woodcutter: 1, miner: 1 },
+      soldiers: 2,
+    };
+    const lost: string[] = [];
+    for (let i = 0; i < 400 && population(realm) > 0; i++) {
+      const next = tick(realm, 0.25);
+      if (next.idle < realm.idle) lost.push('idle');
+      for (const job of ['miner', 'woodcutter', 'farmer'] as const) {
+        if (next.jobs[job] < realm.jobs[job]) lost.push(job);
+      }
+      if (next.soldiers < realm.soldiers) lost.push('soldier');
+      realm = next;
+    }
+    expect(lost).toEqual(['idle', 'miner', 'woodcutter', 'farmer', 'soldier', 'soldier']);
+    expect(population(realm)).toBe(0);
+  });
+
+  it('cuts wood, iron and tax by (1 − s) but not food or upkeep', () => {
+    // 6 civilians and 1 soldier eat 4, 1 farmer makes 1.5: s = 0.625.
+    const realm = {
+      ...createRealm(1),
+      stores: { ...empty },
+      idle: 1,
+      jobs: { farmer: 1, woodcutter: 2, miner: 2 },
+      soldiers: 1,
+    };
+    expect(shortfall(realm)).toBeCloseTo(0.625);
+    const r = rates(realm);
+    expect(r.food).toBeCloseTo(1.5 - 4);
+    expect(r.wood).toBeCloseTo(1.6 * 0.375);
+    expect(r.iron).toBeCloseTo(0.8 * 0.375);
+    expect(r.gold).toBeCloseTo(5 * 0.25 * 0.375 - 0.5);
+    const fed = rates({ ...realm, stores: { ...empty, food: 1 } });
+    expect(fed.wood).toBeCloseTo(1.6);
+    expect(fed.iron).toBeCloseTo(0.8);
+    expect(fed.gold).toBeCloseTo(1.25 - 0.5);
+  });
+
+  it('a single 8 s step at s = 1 loses two people', () => {
+    const starving = {
+      ...createRealm(1),
+      stores: { ...empty },
+      jobs: { farmer: 0, woodcutter: 2, miner: 0 },
+    };
+    expect(tick(starving, 8).idle).toBe(2);
+  });
+
+  it('does not grow while hungry', () => {
+    const starving = {
+      ...createRealm(1),
+      stores: { ...empty },
+      jobs: { farmer: 0, woodcutter: 2, miner: 0 },
+      growth: 3.75,
+    };
+    const next = tick(starving, 0.25);
+    expect(next.idle).toBe(4);
+    expect(next.growth).toBe(0);
+  });
+
+  it('resets hunger once food is above 0', () => {
+    const starving = {
+      ...createRealm(1),
+      stores: { ...empty },
+      jobs: { farmer: 0, woodcutter: 2, miner: 0 },
+    };
+    const hungry = run(starving, 1.5);
+    expect(hungry.hunger).toBeCloseTo(1.5);
+    const fed = tick({ ...hungry, stores: { ...hungry.stores, food: 10 } }, 0.25);
+    expect(fed.hunger).toBe(0);
+    expect(population(fed)).toBe(6);
+    // Back at 0 food, the full 4 s must pass again before anyone leaves.
+    const again = { ...fed, stores: { ...fed.stores, food: 0 } };
+    expect(population(run(again, 3.75))).toBe(6);
+    expect(population(run(again, 4))).toBe(5);
+  });
+
+  it('never drives a store below zero or a headcount below zero', () => {
+    const doomed = {
+      ...createRealm(1),
+      stores: { food: 0, wood: 0, iron: 0, gold: 0 },
+      jobs: { farmer: 0, woodcutter: 2, miner: 2 },
+      soldiers: 3,
+    };
+    const realm = run(doomed, 200);
+    for (const k of RESOURCES) expect(realm.stores[k]).toBeGreaterThanOrEqual(0);
+    expect(population(realm)).toBe(0);
+    expect(realm.idle).toBe(0);
+    expect(realm.soldiers).toBe(0);
+    expect(Object.values(realm.jobs)).toEqual([0, 0, 0]);
+  });
+});
+
+describe('desertion (design §6)', () => {
+  const run = (realm: Realm, seconds: number) => {
+    for (let t = 0; t < seconds; t += 0.25) realm = tick(realm, 0.25);
+    return realm;
+  };
+  // A full house (15 of 15), food to spare and no tax: no growth, no hunger, no income.
+  const broke = {
+    ...createRealm(1),
+    stores: { food: 10000, wood: 0, iron: 0, gold: 0 },
+    jobs: { farmer: 0, woodcutter: 0, miner: 0 },
+    idle: 9,
+    soldiers: 6,
+  };
+
+  it('one soldier deserts every 2 s while gold is at 0', () => {
+    expect(rates(broke).gold).toBeLessThan(0);
+    expect(run(broke, 1.75).soldiers).toBe(6);
+    expect(run(broke, 2).soldiers).toBe(5);
+    expect(run(broke, 6).soldiers).toBe(3);
+  });
+
+  it('deserters leave the realm rather than turning idle', () => {
+    const realm = run(broke, 2);
+    expect(realm.idle).toBe(9);
+    expect(population(realm)).toBe(population(broke) - 1);
+  });
+
+  it('stops once the upkeep is paid by tax', () => {
+    // 9 workers pay 2.25 gold/s; 4 soldiers cost 2. Two desert, then gold climbs.
+    const realm = run({ ...broke, idle: 0, jobs: { farmer: 9, woodcutter: 0, miner: 0 } }, 30);
+    expect(realm.soldiers).toBe(4);
+    expect(realm.stores.gold).toBeGreaterThan(0);
+    expect(realm.desertion).toBe(0);
+  });
+
+  it('resets the 2 s wait once gold is above 0', () => {
+    const waiting = run(broke, 1.5);
+    expect(waiting.desertion).toBeCloseTo(1.5);
+    const paid = tick({ ...waiting, stores: { ...waiting.stores, gold: 100 } }, 0.25);
+    expect(paid.desertion).toBe(0);
+    const again = { ...paid, stores: { ...paid.stores, gold: 0 } };
+    expect(run(again, 1.75).soldiers).toBe(6);
+    expect(run(again, 2).soldiers).toBe(5);
+  });
+
+  it('a single 6 s step loses three soldiers', () => {
+    expect(tick(broke, 6).soldiers).toBe(3);
+  });
+
+  it('does nothing without soldiers', () => {
+    const realm = run({ ...broke, soldiers: 0 }, 10);
+    expect(realm.soldiers).toBe(0);
+    expect(realm.desertion).toBe(0);
   });
 });

@@ -54,7 +54,11 @@ export interface Realm {
   jobs: Record<Job, number>;
   /** Seconds banked toward the next peasant (docs/design.md §4). */
   growth: number;
+  /** Hunger built up while food is at 0; each 4 points, one person leaves (docs/design.md §4). */
+  hunger: number;
   soldiers: number;
+  /** Seconds banked toward the next deserter while gold is at 0 (docs/design.md §6). */
+  desertion: number;
   buildings: Record<Building, number>;
   rivals: Rival[];
   traits: Trait[];
@@ -78,6 +82,8 @@ export const PEOPLE = {
   hutHousing: 5,
   growthEvery: 4,
   growthMinFood: 5,
+  hungerPerLeaver: 4,
+  desertEvery: 2,
 } as const;
 
 /** The starting state (docs/design.md §3). */
@@ -91,7 +97,9 @@ export function createRealm(seed: number): Realm {
     idle: 4,
     jobs: { farmer: 4, woodcutter: 2, miner: 0 },
     growth: 0,
+    hunger: 0,
     soldiers: 0,
+    desertion: 0,
     buildings: { hut: 0, market: 0, forge: 0 },
     rivals: [],
     traits: [],
@@ -130,18 +138,46 @@ export function unassign(realm: Realm, job: Job, count = 1): Realm {
   return { ...realm, idle: realm.idle + n, jobs: { ...realm.jobs, [job]: realm.jobs[job] - n } };
 }
 
-/** Net change per second of every store. */
+/**
+ * Starvation shortfall s (§4): while food is at 0, the share of food eaten that
+ * production doesn't cover, from 0 (fed) to 1 (no food at all). 0 while any
+ * food is left.
+ */
+export function shortfall(realm: Realm): number {
+  if (realm.stores.food > 0) return 0;
+  const eaten =
+    (realm.idle + workers(realm)) * RATES.civilianEats + realm.soldiers * RATES.soldierEats;
+  const produced = realm.jobs.farmer * RATES.farmerFood;
+  return eaten > produced ? (eaten - produced) / eaten : 0;
+}
+
+/** Net change per second of every store. Wood, iron and tax shrink by (1 − s) while starving. */
 export function rates(realm: Realm): Record<Resource, number> {
   const civilians = realm.idle + workers(realm);
+  const fed = 1 - shortfall(realm);
   return {
     food:
       realm.jobs.farmer * RATES.farmerFood -
       civilians * RATES.civilianEats -
       realm.soldiers * RATES.soldierEats,
-    wood: realm.jobs.woodcutter * RATES.woodcutterWood,
-    iron: realm.jobs.miner * RATES.minerIron,
-    gold: workers(realm) * RATES.taxPerWorker - realm.soldiers * RATES.soldierUpkeep,
+    wood: realm.jobs.woodcutter * RATES.woodcutterWood * fed,
+    iron: realm.jobs.miner * RATES.minerIron * fed,
+    gold: workers(realm) * RATES.taxPerWorker * fed - realm.soldiers * RATES.soldierUpkeep,
   };
+}
+
+/**
+ * Removes one starving person (§4): idle peasants first, then miners,
+ * woodcutters and farmers (so farmers stay longest), then soldiers.
+ */
+function loseOne(realm: Realm): Realm {
+  if (realm.idle > 0) return { ...realm, idle: realm.idle - 1 };
+  for (const job of ['miner', 'woodcutter', 'farmer'] as const) {
+    if (realm.jobs[job] > 0)
+      return { ...realm, jobs: { ...realm.jobs, [job]: realm.jobs[job] - 1 } };
+  }
+  if (realm.soldiers > 0) return { ...realm, soldiers: realm.soldiers - 1 };
+  return realm;
 }
 
 /**
@@ -149,8 +185,15 @@ export function rates(realm: Realm): Record<Resource, number> {
  * input untouched, so the same function drives live play and offline catch-up.
  * It copies only what it changes and shares the rest with the input, so treat
  * every Realm as immutable: build a new one rather than editing in place.
- * Stores never go below zero; what happens when they run dry (starvation,
- * desertion) is a later system.
+ * Stores never go below zero.
+ *
+ * Starvation (§4): while food is at 0, hunger builds at s per second and one
+ * person leaves per 4 hunger; hunger resets once s is 0 again (food above 0,
+ * or production covering what is eaten). Growth needs food > 5, so a starving
+ * realm never grows.
+ *
+ * Desertion (§6): while gold is at 0, one soldier deserts per 2 s banked; the
+ * bank resets once gold is above 0 or the army is gone.
  *
  * Growth (§4): while food > 5 and population is under the housing cap, one
  * idle peasant arrives per 4 s banked. The bank empties whenever either
@@ -173,5 +216,21 @@ export function tick(realm: Realm, dt: number): Realm {
   }
   if (!canGrow()) growth = 0;
 
-  return { ...realm, time: realm.time + dt, stores, idle, growth };
+  let next: Realm = { ...realm, time: realm.time + dt, stores, idle, growth };
+
+  const s = shortfall(realm);
+  let hunger = s > 0 ? realm.hunger + s * dt : 0;
+  while (hunger >= PEOPLE.hungerPerLeaver && population(next) > 0) {
+    next = loseOne(next);
+    hunger -= PEOPLE.hungerPerLeaver;
+  }
+
+  let desertion = stores.gold > 0 || next.soldiers === 0 ? 0 : realm.desertion + dt;
+  let soldiers = next.soldiers;
+  while (desertion >= PEOPLE.desertEvery && soldiers > 0) {
+    soldiers -= 1;
+    desertion -= PEOPLE.desertEvery;
+  }
+
+  return { ...next, hunger, soldiers, desertion };
 }
