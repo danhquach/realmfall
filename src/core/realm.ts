@@ -47,6 +47,9 @@ export interface ChronicleEntry {
 export interface Realm {
   /** The run's seed: every random roll in the run derives from it. */
   seed: number;
+  /** The player's realm and ruling house, shown in the header. */
+  name: string;
+  dynasty: string;
   /** Game seconds elapsed since the run began. */
   time: number;
   year: number;
@@ -95,6 +98,8 @@ export const PEOPLE = {
 export function createRealm(seed: number): Realm {
   return {
     seed: seed >>> 0,
+    name: 'Hearthmoor',
+    dynasty: 'House Edric',
     time: 0,
     year: 1,
     ruler: { name: 'Edric', age: 45 },

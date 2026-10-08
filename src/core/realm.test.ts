@@ -90,6 +90,8 @@ describe('createRealm', () => {
   it('holds the Phase 1 state, starting empty (design §3)', () => {
     const realm = createRealm(7);
     expect(realm.seed).toBe(7);
+    expect(realm.name).toBe('Hearthmoor');
+    expect(realm.dynasty).toBe('House Edric');
     expect(realm.time).toBe(0);
     expect(realm.year).toBe(1);
     expect(realm.ruler.age).toBe(45);
