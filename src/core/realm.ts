@@ -23,15 +23,9 @@ export const TRAITS = [
 ] as const;
 export type Trait = (typeof TRAITS)[number];
 
-export interface Ruler {
-  name: string;
-  age: number;
-}
-
-/** A rival kingdom (docs/design.md §7). */
+/** A rival kingdom, known only by its place name (docs/design.md §7). */
 export interface Rival {
   name: string;
-  ruler: string;
   trait: Trait;
   power: number;
   hostile: boolean;
@@ -47,13 +41,11 @@ export interface ChronicleEntry {
 export interface Realm {
   /** The run's seed: every random roll in the run derives from it. */
   seed: number;
-  /** The player's realm and ruling house, shown in the header. */
+  /** The player's realm, shown in the header. */
   name: string;
-  dynasty: string;
   /** Game seconds elapsed since the run began. */
   time: number;
   year: number;
-  ruler: Ruler;
   stores: Record<Resource, number>;
   idle: number;
   jobs: Record<Job, number>;
@@ -99,10 +91,8 @@ export function createRealm(seed: number): Realm {
   return {
     seed: seed >>> 0,
     name: 'Hearthmoor',
-    dynasty: 'House Edric',
     time: 0,
     year: 1,
-    ruler: { name: 'Edric', age: 45 },
     stores: { food: 80, wood: 40, iron: 10, gold: 40 },
     idle: 4,
     jobs: { farmer: 4, woodcutter: 2, miner: 0 },
@@ -151,20 +141,6 @@ const NAME_TAILS = [
   'reach',
   'wood',
 ];
-const RULER_NAMES = [
-  'Aldra',
-  'Berin',
-  'Cedric',
-  'Dagna',
-  'Eluned',
-  'Gareth',
-  'Hilde',
-  'Ivo',
-  'Maren',
-  'Osric',
-  'Rowena',
-  'Torin',
-];
 
 /** Every trait a rival can hold. Stone halls is out of the design; #13 drops it from TRAITS. */
 const RIVAL_TRAITS = TRAITS.filter((t) => t !== 'stoneHalls');
@@ -184,7 +160,6 @@ function rivalName(rng: Rng, taken: ReadonlySet<string>): string {
 export function createRival(rng: Rng, power: number, taken: ReadonlySet<string>): Rival {
   return {
     name: rivalName(rng, taken),
-    ruler: `${pick(rng, ['King', 'Queen'])} ${pick(rng, RULER_NAMES)}`,
     trait: pick(rng, RIVAL_TRAITS),
     power,
     hostile: chance(rng, RIVAL.hostileChance),
@@ -214,10 +189,10 @@ export function growRivals(realm: Realm): Realm {
 /** Gold prices of the rival actions (docs/design.md §7). */
 export const RIVAL_ACTIONS = { scoutGold: 15, tributeGold: 30 } as const;
 
-/** What the UI may show of a rival: ruler, trait and power only once it is scouted (§7). */
+/** What the UI may show of a rival: trait and power only once it is scouted (§7). */
 export type RivalView =
   | { name: string; hostile: boolean; scouted: false }
-  | { name: string; hostile: boolean; scouted: true; ruler: string; trait: Trait; power: number };
+  | { name: string; hostile: boolean; scouted: true; trait: Trait; power: number };
 
 /** A rival as the UI may see it; an unscouted rival's hidden stats are left out, not blanked. */
 export function rivalView(rival: Rival): RivalView {
@@ -227,7 +202,6 @@ export function rivalView(rival: Rival): RivalView {
     name,
     hostile,
     scouted: true,
-    ruler: rival.ruler,
     trait: rival.trait,
     power: rival.power,
   };
@@ -239,7 +213,7 @@ function updateRival(realm: Realm, index: number, change: (r: Rival) => Rival): 
 }
 
 /**
- * Scouts rival `index` for 15 gold, revealing its ruler, power and trait (§7).
+ * Scouts rival `index` for 15 gold, revealing its power and trait (§7).
  * Nothing changes if there is no such rival, it is already scouted, or gold is short.
  */
 export function scout(realm: Realm, index: number): Realm {
