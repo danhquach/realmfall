@@ -426,6 +426,49 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   return gainTrait(annexed, rival.trait);
 }
 
+/** Raid timing, strength range and loss (docs/design.md §7). */
+export const RAID = {
+  every: 45,
+  minStrength: 0.4,
+  maxStrength: 0.8,
+  loss: 0.25,
+} as const;
+
+/** The stores a raid on the capital takes from (§7). */
+const RAIDED = ['food', 'wood'] as const;
+
+/**
+ * The rng for raid number `n` (the one at n × 45 s), from its own stream
+ * derived from the run's seed, so offline catch-up replays the same raids.
+ */
+export function raidRng(seed: number, n: number): Rng {
+  return createRng((seed ^ 0x52414944 ^ Math.imul(n, 0x9e3779b9)) >>> 0);
+}
+
+/**
+ * One raid on the capital (§7): a random hostile rival attacks with strength
+ * E × (0.4–0.8). If field army power ≥ strength it is repelled; otherwise the
+ * realm loses 25% of the food and wood above the Storehouse's safe amount.
+ * Nothing happens while no rival is hostile.
+ */
+export function raid(realm: Realm, rng: Rng): Realm {
+  const hostile = realm.rivals.filter((r) => r.hostile);
+  if (hostile.length === 0) return realm;
+  const rival = pick(rng, hostile);
+  const strength = rival.power * (RAID.minStrength + (RAID.maxStrength - RAID.minStrength) * rng());
+  if (armyPower(realm) >= strength) {
+    return chronicle(realm, `Repelled a raid from ${rival.name}.`);
+  }
+  const safe = safeAmounts(realm);
+  const stores = { ...realm.stores };
+  for (const k of RAIDED) stores[k] -= Math.max(0, stores[k] - safe[k]) * RAID.loss;
+  const lost = RAIDED.map((k) => Math.floor(realm.stores[k] - stores[k]));
+  const text = lost.some((n) => n > 0)
+    ? `${rival.name} raided the capital: lost ${lost[0]} food and ${lost[1]} wood.`
+    : `${rival.name} raided the capital but found nothing to take.`;
+  return chronicle({ ...realm, stores }, text);
+}
+
 /** Gold after adding `amount`, stopped at the gold cap but never lowering gold already over it. */
 function addGold(realm: Realm, amount: number): number {
   const { gold } = realm.stores;
@@ -796,8 +839,25 @@ function loseOne(realm: Realm): Realm {
  *
  * Years (§10): year n begins at (n − 1) × 8 s of game time. Every year passed
  * in the step, however large `dt` is, runs the yearly hooks once (rival growth, §7).
+ *
+ * Raids (§7): raid number n lands at n × 45 s of game time, rolled on
+ * raidRng(seed, n). A step that crosses a raid is split there, so a big step
+ * (offline catch-up) refills the stores between raids just as live play does.
  */
 export function tick(realm: Realm, dt: number): Realm {
+  let next = realm;
+  let left = dt;
+  for (;;) {
+    const toRaid = (Math.floor(next.time / RAID.every) + 1) * RAID.every - next.time;
+    // `!(>)` also ends on NaN; toRaid ≤ 0 only at float limits, where no split can help.
+    if (!(left > toRaid) || !(toRaid > 0)) return step(next, left);
+    next = step(next, toRaid);
+    left -= toRaid;
+  }
+}
+
+/** One stretch of tick() that ends on or before the next raid. */
+function step(realm: Realm, dt: number): Realm {
   const r = rates(realm);
   const caps = storeCaps(realm);
   const stores = { ...realm.stores };
@@ -833,7 +893,15 @@ export function tick(realm: Realm, dt: number): Realm {
   }
 
   next = { ...next, hunger, soldiers, desertion };
-  const year = 1 + Math.floor(next.time / YEAR_SECONDS);
-  while (next.year < year) next = { ...growRivals(next), year: next.year + 1 };
+  // Years and raids run in time order, so a raid meets the rivals and year of its moment.
+  const toYear = (year: number) => {
+    while (next.year < year) next = { ...growRivals(next), year: next.year + 1 };
+  };
+  const raids = Math.floor(next.time / RAID.every);
+  for (let n = Math.floor(realm.time / RAID.every) + 1; n <= raids; n++) {
+    toYear(1 + Math.floor((n * RAID.every) / YEAR_SECONDS));
+    next = raid(next, raidRng(next.seed, n));
+  }
+  toYear(1 + Math.floor(next.time / YEAR_SECONDS));
   return next;
 }

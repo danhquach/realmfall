@@ -16,6 +16,9 @@ import {
   buildingCost,
   RIVAL,
   RIVAL_ACTIONS,
+  RAID,
+  raid,
+  raidRng,
   canAfford,
   createRealm,
   createRival,
@@ -53,6 +56,12 @@ import {
   type Realm,
   type Trait,
 } from './realm.ts';
+
+/** The realm with every rival at peace, so no raid lands during a long run (§7). */
+const atPeace = (realm: Realm): Realm => ({
+  ...realm,
+  rivals: realm.rivals.map((r) => ({ ...r, hostile: false })),
+});
 
 describe('rates', () => {
   it('opens with a thin +1.0 food/s surplus (design §3)', () => {
@@ -162,7 +171,7 @@ describe('tick purity and time', () => {
 
   it('1 000 ticks of 0.25 s equal 250 s of game time', () => {
     // A full house (15 of 15) rules out growth, so rates stay fixed and one big step must match.
-    const full = { ...createRealm(1), jobs: { farmer: 9, woodcutter: 2, miner: 0 } };
+    const full = { ...atPeace(createRealm(1)), jobs: { farmer: 9, woodcutter: 2, miner: 0 } };
     let realm = full;
     for (let i = 0; i < 1000; i++) realm = tick(realm, 0.25);
     expect(realm.time).toBeCloseTo(250, 9);
@@ -329,7 +338,7 @@ describe('growth (design §4)', () => {
   });
 
   it('resumes growth when a hut raises the cap mid-run', () => {
-    const full = run(createRealm(1), 60);
+    const full = run(atPeace(createRealm(1)), 60);
     expect(population(full)).toBe(15);
     const built = { ...full, buildings: { ...full.buildings, hut: 1 } };
     expect(population(run(built, 4))).toBe(16);
@@ -545,7 +554,7 @@ describe('store caps (design §3)', () => {
 
   it('stops each store at its cap and loses the rest', () => {
     const realm = {
-      ...createRealm(1),
+      ...atPeace(createRealm(1)),
       idle: 0,
       jobs: { farmer: 20, woodcutter: 10, miner: 10 },
     };
@@ -561,9 +570,10 @@ describe('store caps (design §3)', () => {
 
   it('uses the caps of the current Storehouse level', () => {
     const realm = {
-      ...createRealm(1),
+      ...atPeace(createRealm(1)),
       storehouse: 2,
-      jobs: { farmer: 0, woodcutter: 20, miner: 0 },
+      // 12 farmers feed all 36 people, so starvation never cuts wood.
+      jobs: { farmer: 12, woodcutter: 20, miner: 0 },
     };
     expect(tick(realm, 1000).stores.wood).toBe(2000);
   });
@@ -1552,5 +1562,149 @@ describe('traits (design §9)', () => {
     it('starting rivals sit on rings 1, 1 and 2', () => {
       expect(startingRivals(9).map((r) => r.ring)).toEqual([1, 1, 2]);
     });
+  });
+});
+
+describe('raids (design §7)', () => {
+  /** Rolls: the first picks the raider, the second sets its strength. */
+  const rolls = (...values: number[]) => {
+    let i = 0;
+    return () => values[i++] ?? 0;
+  };
+  /** Only rival 0 hostile, at `power`; `soldiers` spearmen; the given stores and Storehouse level. */
+  const target = (soldiers: number, power: number, food: number, wood: number, storehouse = 1) => {
+    const realm = createRealm(5);
+    return {
+      ...realm,
+      soldiers,
+      storehouse,
+      stores: { food, wood, iron: 10, gold: 40 },
+      rivals: realm.rivals.map((r, i) => ({ ...r, power, hostile: i === 0 })),
+    } satisfies Realm;
+  };
+
+  it('is repelled when field army power ≥ strength, losing nothing', () => {
+    // 10 spearmen = 20 power against 25 × 0.8 = 20 at the top roll.
+    const realm = target(10, 25, 300, 300);
+    const after = raid(realm, rolls(0, 0.999999));
+    expect(after.stores).toEqual(realm.stores);
+    expect(after.chronicle.at(-1)!.text).toBe(`Repelled a raid from ${realm.rivals[0]!.name}.`);
+  });
+
+  it('takes 25% of the food and wood above the safe amount when not repelled', () => {
+    // Level 1: 50 food and 60 wood safe. 9 soldiers = 18 power < 25 × 0.8 = 20.
+    const realm = target(9, 25, 250, 160);
+    const after = raid(realm, rolls(0, 0.999999));
+    expect(after.stores.food).toBe(200);
+    expect(after.stores.wood).toBe(135);
+    expect(after.stores.iron).toBe(10);
+    expect(after.stores.gold).toBe(40);
+    expect(after.chronicle.at(-1)!.text).toBe(
+      `${realm.rivals[0]!.name} raided the capital: lost 50 food and 25 wood.`,
+    );
+  });
+
+  it('rolls strength E × (0.4–0.8): the same army holds a low roll and falls to a high one', () => {
+    // 10 spearmen = 20 power; rival 40 → strength 16 (roll 0) or ~32 (roll ~1).
+    const realm = target(10, 40, 300, 300);
+    expect(raid(realm, rolls(0, 0)).stores).toEqual(realm.stores);
+    expect(raid(realm, rolls(0, 0.999999)).stores.food).toBeLessThan(300);
+    // Exactly equal power is repelled: 40 × (0.4 + 0.4 × 0.25) = 20.
+    expect(raid(realm, rolls(0, 0.25)).stores).toEqual(realm.stores);
+  });
+
+  it('never takes the safe amount, and a realm under it loses nothing', () => {
+    for (const level of [1, 2, 3, 4]) {
+      const safe = safeAmounts({ ...createRealm(1), storehouse: level });
+      const under = target(0, 100, safe.food - 1, safe.wood, level);
+      expect(raid(under, rolls(0, 0.5)).stores).toEqual(under.stores);
+      let realm = target(0, 100, safe.food + 1000, safe.wood + 1000, level);
+      for (let i = 0; i < 200; i++) realm = raid(realm, rolls(0, 0.5));
+      expect(realm.stores.food).toBeGreaterThanOrEqual(safe.food);
+      expect(realm.stores.wood).toBeGreaterThanOrEqual(safe.wood);
+    }
+    // Each store is judged on its own: food under safe keeps all, wood over loses a quarter of the excess.
+    const mixed = raid(target(0, 100, 40, 160), rolls(0, 0.5));
+    expect(mixed.stores.food).toBe(40);
+    expect(mixed.stores.wood).toBe(135);
+    // Level 0 protects nothing: an unarmed realm loses a quarter of everything.
+    const bare = raid(target(0, 100, 80, 40, 0), rolls(0, 0.5));
+    expect(bare.stores.food).toBe(60);
+    expect(bare.stores.wood).toBe(30);
+  });
+
+  it('says so when a lost raid finds nothing above the safe amount', () => {
+    const realm = target(0, 100, 50, 60);
+    const after = raid(realm, rolls(0, 0.5));
+    expect(after.stores).toEqual(realm.stores);
+    expect(after.chronicle.at(-1)!.text).toBe(
+      `${realm.rivals[0]!.name} raided the capital but found nothing to take.`,
+    );
+  });
+
+  it('a big step splits at each raid, matching steps of exactly 45 s', () => {
+    // A full house (15 of 15) rules out growth; woodcutters refill wood between raids.
+    const base = createRealm(1);
+    const full = {
+      ...base,
+      storehouse: 1,
+      jobs: { farmer: 9, woodcutter: 2, miner: 0 },
+      rivals: base.rivals.map((r) => ({ ...r, hostile: true })),
+    };
+    let split = full;
+    for (let i = 0; i < 10; i++) split = tick(split, RAID.every);
+    const big = tick(full, RAID.every * 10);
+    expect(big).toEqual(split);
+    expect(big.chronicle.filter((c) => /raid/.test(c.text))).toHaveLength(10);
+  });
+
+  it('does nothing while no rival is hostile', () => {
+    const realm = target(0, 100, 300, 300);
+    const peace = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: false })) };
+    expect(raid(peace, rolls(0, 0.999999))).toBe(peace);
+    const after = tick(peace, RAID.every * 3);
+    expect(after.chronicle).toHaveLength(0);
+  });
+
+  it('picks only among hostile rivals', () => {
+    const realm = createRealm(5);
+    const rivals = realm.rivals.map((r, i) => ({ ...r, power: 1000, hostile: i !== 1 }));
+    const names = new Set<string>();
+    for (const roll of [0, 0.4, 0.6, 0.999999]) {
+      const text = raid({ ...realm, rivals }, rolls(roll, 0.5)).chronicle.at(-1)!.text;
+      names.add(text.split(' raided')[0]!);
+    }
+    expect(names).toEqual(new Set([rivals[0]!.name, rivals[2]!.name]));
+  });
+
+  it('tick raids once every 45 s of game time, rolled on raidRng(seed, n)', () => {
+    // 5 food stops growth and sits under the safe amount, so only wood moves.
+    const realm = target(0, 100, 5, 300, 1);
+    const frozen = { ...realm, idle: 0, jobs: { farmer: 0, woodcutter: 0, miner: 0 } };
+    expect(tick(frozen, RAID.every - 0.25).chronicle).toHaveLength(0);
+    let stepped = frozen;
+    for (let t = 0; t < RAID.every * 2; t += 0.25) stepped = tick(stepped, 0.25);
+    expect(stepped.chronicle).toHaveLength(2);
+    // One big step runs the same two raids as many small ones.
+    const big = tick(frozen, RAID.every * 2);
+    expect(big.chronicle).toEqual(stepped.chronicle);
+    expect(big.stores.wood).toBeCloseTo(stepped.stores.wood, 9);
+    expect(big.chronicle.map((c) => c.year)).toEqual([6, 12]);
+    // The first raid matches a direct roll on raidRng(seed, 1).
+    const first = raid({ ...frozen, time: RAID.every }, raidRng(frozen.seed, 1));
+    expect(stepped.chronicle[0]!.text).toBe(first.chronicle[0]!.text);
+  });
+
+  it('replays the same raids from the same seed', () => {
+    const run = (seed: number) => {
+      const base = createRealm(seed);
+      let r = { ...base, soldiers: 3, rivals: base.rivals.map((v) => ({ ...v, hostile: true })) };
+      for (let t = 0; t < RAID.every * 10; t += 0.25) r = tick(r, 0.25);
+      return r.chronicle.filter((c) => /raid/.test(c.text));
+    };
+    expect(run(42)).toHaveLength(10);
+    expect(run(42)).toEqual(run(42));
+    expect(raidRng(42, 1)()).not.toBe(raidRng(42, 2)());
+    expect(raidRng(42, 1)()).not.toBe(raidRng(43, 1)());
   });
 });
