@@ -230,6 +230,17 @@ export function forgeBonus(realm: Realm): number {
   return 1 + FORGE_BONUS * realm.buildings.forge;
 }
 
+/** Spearmen, the one Phase 1 unit (docs/design.md §6): 1 peasant + this cost each. */
+export const SOLDIER: { readonly cost: Cost; readonly power: number } = {
+  cost: { iron: 5, gold: 10 },
+  power: 2,
+};
+
+/** Field army power (§6): base power of every soldier × the Forge multiplier. */
+export function armyPower(realm: Realm): number {
+  return realm.soldiers * SOLDIER.power * forgeBonus(realm);
+}
+
 export function workers(realm: Realm): number {
   return realm.jobs.farmer + realm.jobs.woodcutter + realm.jobs.miner;
 }
@@ -259,6 +270,25 @@ export function unassign(realm: Realm, job: Job, count = 1): Realm {
   const n = Math.min(wholeCount(count), realm.jobs[job]);
   if (n === 0) return realm;
   return { ...realm, idle: realm.idle + n, jobs: { ...realm.jobs, [job]: realm.jobs[job] - n } };
+}
+
+/**
+ * Trains up to `count` soldiers, each taking one idle peasant and paying
+ * SOLDIER.cost; stops at the first one the idle pool or stores can't cover.
+ */
+export function train(realm: Realm, count = 1): Realm {
+  let next = realm;
+  for (let i = wholeCount(count); i > 0 && next.idle > 0 && canAfford(next, SOLDIER.cost); i--) {
+    next = { ...pay(next, SOLDIER.cost), idle: next.idle - 1, soldiers: next.soldiers + 1 };
+  }
+  return next;
+}
+
+/** Sends up to `count` soldiers back to idle; the training cost is not refunded (§6). */
+export function disband(realm: Realm, count = 1): Realm {
+  const n = Math.min(wholeCount(count), realm.soldiers);
+  if (n === 0) return realm;
+  return { ...realm, idle: realm.idle + n, soldiers: realm.soldiers - n };
 }
 
 /**
