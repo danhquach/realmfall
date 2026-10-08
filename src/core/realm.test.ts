@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   RESOURCES,
+  SOLDIER,
   STOREHOUSE,
+  armyPower,
   assign,
   build,
   buildingCost,
   canAfford,
   createRealm,
+  disband,
   forgeBonus,
   housingCap,
   pay,
@@ -17,6 +20,7 @@ import {
   storeCaps,
   storehouseLevel,
   tick,
+  train,
   unassign,
   upgradeCost,
   upgradeStorehouse,
@@ -732,5 +736,93 @@ describe('buildings (design §5)', () => {
     expect(forgeBonus(createRealm(1))).toBe(1);
     expect(forgeBonus(owning('forge', 1))).toBe(1.5);
     expect(forgeBonus(owning('forge', 3))).toBe(2.5);
+  });
+});
+
+describe('soldiers and army power (design §6)', () => {
+  const rich = (): Realm => {
+    const realm = createRealm(1);
+    return { ...realm, stores: { ...realm.stores, iron: 50, gold: 150 } };
+  };
+
+  it('training costs 1 idle peasant, 5 iron and 10 gold', () => {
+    expect(SOLDIER.cost).toEqual({ iron: 5, gold: 10 });
+    const realm = createRealm(1); // 4 idle, 10 iron, 40 gold
+    const next = train(realm);
+    expect(next.soldiers).toBe(1);
+    expect(next.idle).toBe(3);
+    expect(next.stores).toEqual({ ...realm.stores, iron: 5, gold: 30 });
+    expect(population(next)).toBe(population(realm));
+  });
+
+  it('trains several at once, stopping at what the stores pay for', () => {
+    const realm = createRealm(1); // 10 iron: enough for 2
+    const next = train(realm, 4);
+    expect(next.soldiers).toBe(2);
+    expect(next.idle).toBe(2);
+    expect(next.stores.iron).toBe(0);
+    expect(next.stores.gold).toBe(20);
+  });
+
+  it('trains only from idle peasants, never from workers', () => {
+    const next = train(rich(), 10);
+    expect(next.soldiers).toBe(4);
+    expect(next.idle).toBe(0);
+    expect(next.jobs).toEqual(createRealm(1).jobs);
+    expect(train(next)).toBe(next);
+  });
+
+  it("can't train without iron or gold", () => {
+    const realm = createRealm(1);
+    const noIron = { ...realm, stores: { ...realm.stores, iron: 4 } };
+    expect(train(noIron)).toBe(noIron);
+    const noGold = { ...realm, stores: { ...realm.stores, gold: 9 } };
+    expect(train(noGold)).toBe(noGold);
+  });
+
+  it('ignores zero, negative, fractional and non-finite counts', () => {
+    const realm = rich();
+    for (const count of [0, -1, Number.NaN, Infinity]) {
+      expect(train(realm, count)).toBe(realm);
+      expect(disband({ ...realm, soldiers: 2 }, count).soldiers).toBe(2);
+    }
+    expect(train(realm, 2.9).soldiers).toBe(2);
+  });
+
+  it('disband returns soldiers to idle with no refund', () => {
+    const trained = train(rich(), 3);
+    const next = disband(trained, 2);
+    expect(next.soldiers).toBe(1);
+    expect(next.idle).toBe(trained.idle + 2);
+    expect(next.stores).toEqual(trained.stores);
+    expect(disband(next, 5).soldiers).toBe(0);
+    expect(disband(createRealm(1))).toEqual(createRealm(1));
+  });
+
+  it('upkeep shows in rates: 1 food/s and 0.5 gold/s per soldier', () => {
+    const realm = rich();
+    const before = rates(realm);
+    const after = rates(train(realm, 3));
+    // Trained from idle: an idle peasant ate 0.5 food/s, a soldier eats 1.
+    expect(after.food).toBeCloseTo(before.food - 3 * (1 - 0.5));
+    expect(after.gold).toBeCloseTo(before.gold - 3 * 0.5);
+    expect(rates(disband(train(realm, 3), 3))).toEqual(before);
+  });
+
+  it('army power is 2 per soldier × (1 + 0.5 × forges)', () => {
+    const army = { ...createRealm(1), soldiers: 10 };
+    const withForges = (forge: number) => ({ ...army, buildings: { ...army.buildings, forge } });
+    expect(armyPower(createRealm(1))).toBe(0);
+    expect(armyPower(withForges(0))).toBe(20);
+    expect(armyPower(withForges(1))).toBe(30);
+    expect(armyPower(withForges(2))).toBe(40);
+  });
+
+  it('train and disband do not mutate their input', () => {
+    const realm = rich();
+    const before = structuredClone(realm);
+    train(realm, 2);
+    disband({ ...realm, soldiers: 2 });
+    expect(realm).toEqual(before);
   });
 });
