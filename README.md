@@ -33,8 +33,11 @@ readout for now.
   Claim sites with garrisons for their bonuses; march times depend on distance.
 - **Unit counters.** Spearmen, archers and cavalry counter each other in a cycle.
 - **Conquest.** A won battle annexes the rival: land, people, gold, and its
-  trait, which permanently changes your kingdom (e.g. Dwarven smiths double
-  mining output).
+  trait.
+- **Traits.** Passive effects with an upside and a downside (e.g. Dwarven
+  smiths double mining output but slow woodcutting), in five tiers from Common
+  to Mythic. Earn them by conquest, milestones, challenges or the market; run
+  three at a time and upgrade them with duplicates.
 - **Chronicle.** A running history of your realm: harvests, plagues, envoys,
   raids and battles.
 

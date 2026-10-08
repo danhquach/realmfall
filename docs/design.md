@@ -7,9 +7,9 @@ haven't been prototyped yet.
 ## 1. Vision
 
 A text-based idle kingdom builder. You start with a handful of peasants and a
-thin granary, grow a realm, and conquer the kingdoms and lands around you. Each
-conquest absorbs the rival's trait, so every realm grows into something
-different.
+thin granary, grow a realm, and conquer the kingdoms and lands around you. Conquest,
+milestones, challenges and the market earn traits, and you choose three to run,
+so every realm grows into something different.
 
 ### Pillars
 
@@ -150,8 +150,8 @@ A unit's **effective power** is its base power × its average multiplier,
 weighted by the enemy army's mix. For example, a spearman facing an army that
 is half cavalry, half archers fights at 2 × (0.5 × 1.5 + 0.5 × 0.67) ≈ 2.2.
 
-**Army power** = Σ effective power of every field unit × (1 + 0.5 × forges) ×
-(1 + bonuses from traits). Units in garrisons don't count.
+**Army power** = Σ effective power of every field unit × its slotted trait
+modifiers (§9) × (1 + 0.5 × forges). Units in garrisons don't count.
 
 Example: 20 Spearmen (base 40) against 20 Cavalry (base 60). Raw power says you
 lose (31%). With counters, your spearmen fight at 40 × 1.5 = 60 and their
@@ -202,7 +202,7 @@ garrisons and bandits.
 
 - **Win against a capital:** lose ⌈soldiers × (0.1 + 0.3 × (1 − win chance))⌉
   soldiers. Annex the rival: +10 housing, +⌊E / 8⌋ people, +E gold, its trait
-  permanently, and every site it held (§8).
+  (§9), and every site it held (§8).
 - **Loss:** lose ⌈50%⌉ of soldiers. The rival gains +10% power and turns hostile.
 
 ### Raids
@@ -320,18 +320,85 @@ the outermost ring, a new ring is generated beyond it, with more rivals (power
 
 ## 9. Traits
 
-A conquered rival's trait is added to your kingdom permanently. Traits stack.
+Traits are realm-wide passive effects. Every trait has an upside and a
+downside. You can own many traits, but only the ones in your **3 trait slots**
+take effect, so earning more traits gives you more options, not more power.
 
-| Trait | Effect |
-|---|---|
-| Poison archers | Archers +50% power |
-| Horse lords | Cavalry +50% power, march −25% |
-| Dwarven smiths | Miner output +100% |
-| Fertile valleys | Farmer output +50% |
-| Timber clans | Woodcutter output +75% |
-| Merchant guilds | Tax +50% |
+### Tiers
 
-The trait pool is the main source of variety and needs to grow (see §13).
+Each trait has a tier. The tier sets its trader price, sell price, how often it
+is rolled, and how far out rivals start to hold it.
+
+| Tier | Colour (light / dark) | Traits | Trader price | Sell price | Roll odds | Rivals from ring |
+|---|---|---|---|---|---|---|
+| Common | grey `#5f5a52` / `#c9c2b6` | Fertile valleys, Timber clans | 150–250 gold | 40 gold | 45% | 1 |
+| Fine | green `#276b2b` / `#81c784` | Dwarven smiths, Merchant guilds | 300–500 | 75 | 30% | 2 |
+| Noble | blue `#1f5fa8` / `#7fb3f0` | Poison archers, Horse lords | 600–1,000 | 150 | 15% | 3 |
+| Royal | purple `#7b3fa0` / `#c39be0` | Warrior creed | 1,200–1,800 | 300 | 7% | 4 |
+| Mythic | gold `#9a5b06` / `#f0b44c` | Golden age | 2,500–4,000 | 600 | 3% | 6 |
+
+A trait's name is shown in its tier colour wherever it appears (trait panel,
+trader, offers, Chronicle), always with the tier name next to it: colour alone
+isn't enough for colour-blind players. Every colour meets 4.5:1 contrast on its
+theme's background.
+
+Royal and Mythic hold one trait each until the pool grows (§13, §14).
+
+### Effects
+
+| Trait | Tier | Upside (level 1) | Downside |
+|---|---|---|---|
+| Fertile valleys | Common | Farmer output +50% | Miner output −25% |
+| Timber clans | Common | Woodcutter output +75% | Farmer output −20% |
+| Dwarven smiths | Fine | Miner output +100% | Woodcutter output −25% |
+| Merchant guilds | Fine | Tax +50% | Soldier gold upkeep +25% |
+| Poison archers | Noble | Archers +50% power | Spearmen −20% power |
+| Horse lords | Noble | Cavalry +50% power, march −25% | Cavalry upkeep +50% |
+| Warrior creed | Royal | Army power +30% | No population growth while at peace with every rival |
+| Golden age | Mythic | All production and tax +25% | Rivals gain +6% power per year instead of +4% |
+
+- A unit-type bonus applies to that unit type's power only.
+- Modifiers on the same stat add up: +50% and −20% make +30%.
+
+### Slots
+
+- Effects and downsides apply only while a trait is slotted. Owned traits
+  that aren't slotted do nothing.
+- Filling an empty slot is free.
+- Swapping a slotted trait for another owned one costs 5 × population gold,
+  and that slot then has a 5-year cooldown.
+
+### Duplicates and upgrades
+
+Gaining a trait you already own gives you a **duplicate**.
+
+- **Upgrade:** spend duplicates to raise a trait's level, up to level 5.
+  Level n → n + 1 costs 2ⁿ⁻¹ duplicates (1, 2, 4, 8; 15 in total for
+  level 5). Each level adds +25% of the level-1 upside, so level 5 has 2× the
+  upside. The downside stays fixed.
+- **Sell:** a duplicate sells for its tier's sell price at any time.
+- Every sell price is below the lowest trader price for that tier, so buying
+  to resell always loses gold.
+
+Slots and the level cap bound the total: at most three traits, each at most
+2× its base upside.
+
+### Earning traits
+
+| Source | How | Reward |
+|---|---|---|
+| Conquest | Annex a rival capital (§7) | Its trait |
+| Milestones | One-off goals: 50 people · hold 5 sites · win 10 battles · Storehouse level 3 · repel 5 raids | Pick 1 of 3 rolled traits |
+| Challenges | While none is active, one is offered every 15 years with a deadline in years (e.g. stockpile 500 food in 3 years, claim a site in 4 years, repel the next raid). Failing costs nothing. | Pick 1 of 2 rolled traits |
+| Market trader | Needs at least one Market. Every 10 years the trader offers 3 rolled traits, each at a random price within its tier's range. | Buy any of them |
+
+- A **rolled** trait picks its tier by the roll odds above, then a trait of
+  that tier at random. It can be one you already own, which gives a duplicate.
+- A rival's trait is drawn only from tiers unlocked at its ring, so farther
+  conquests give better traits.
+- Trader prices count against the gold cap (§3): a Mythic trait needs the gold
+  cap of Storehouse level 3.
+- Every gain, slot, swap, upgrade and sale is written to the Chronicle.
 
 ## 10. Time
 
@@ -367,6 +434,7 @@ and events. It's the game's main feedback channel and its story.
    idle game.
 4. **No offline progress.** Idle games need it; see §14.
 5. **No late-game sink.** Gold and food pile up once the economy is stable.
+   Trait trader prices and swap costs (§9) soak up some gold, but not food.
 6. **The map is untested.** Garrison sizes, site yields, march time and rival
    expansion rate need a prototype before they can be trusted.
 
@@ -378,8 +446,9 @@ Ordered by how much they add to the endless loop:
    simulate the time away (capped, e.g. 8 h) in the same fixed 0.25 s steps as
    live play, so store caps, growth and hunger behave exactly as they would
    online, and write a Chronicle summary.
-2. **Bigger trait pool and trait synergies.** Some pairs of traits combine into
-   a stronger effect (e.g. Dwarven smiths + Horse lords → Ironclad cavalry).
+2. **Bigger trait pool and trait synergies.** More traits per tier, and some
+   pairs of slotted traits combine into a stronger effect (e.g. Dwarven smiths
+   + Horse lords → Ironclad cavalry).
 3. **Research.** Scholars produce research points that unlock techs
    (agriculture, warfare, civic). Civic techs upgrade housing: Huts become
    Houses and then Stone houses, each holding more people, and techs such as
