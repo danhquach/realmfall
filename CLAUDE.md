@@ -5,7 +5,8 @@
 - **One worktree per ticket.** Every ticket is worked in its own git worktree on its own branch, never in the shared main checkout, so parallel sessions never share a working tree or a branch: `git fetch && git worktree add .claude/worktrees/issue-<n> -b issue-<n>-<short-slug> origin/main`. Run `git worktree list` first; a worktree or branch that already exists for another ticket belongs to another session, so leave it alone. The main checkout stays on `main` with a clean tree. Remove the worktree after the PR merges (`git worktree remove .claude/worktrees/issue-<n>`).
 - **Always merge via a GitHub pull request.** Every branch lands on `main` through a PR — never a local `git merge` pushed to `main`. The PR is the merge record.
 - **QA before commit.** Run the full suites from a clean install (`npm ci && npm run lint && npm test && npm run build`) and verify the ticket's acceptance criteria. All green before any commit.
-- **Senior-dev code review before commit.** Run a senior-level code review of the working-tree diff (correctness, tests, spec acceptance criteria, conventions). Findings must be resolved or explicitly accepted.
+- **Senior-dev code review before commit.** Run a senior-level code review of the working-tree diff (correctness, tests, spec acceptance criteria, conventions). Findings must be resolved (see the next rule).
+- **Fix what you find in the ticket itself.** Anything found while working a ticket (review findings, edge cases, robustness gaps) is fixed on that ticket's branch, then QA and the review run again. No "accepted, not fixed" leftovers in the final report or PR body. The only exception is work an open ticket already covers: link it, or add it to that ticket's description and acceptance criteria.
 - **Injection security check before commit.** Any change that adds or touches data the code does not control (player-typed text, save or `localStorage` parsing, URL params, network responses, and any future database or API) gets a `security-devops` audit of the working-tree diff before commit, next to the senior review. The audit covers every path that data travels:
   - SQL/NoSQL injection: parameterised queries only, never queries built from strings.
   - HTML injection/XSS: no `innerHTML`, `eval` or similar sinks; render as text.
@@ -15,7 +16,7 @@
   - Unicode tricks: bidi overrides, zero-width characters, look-alikes.
   - Leaks: the data must not reach a URL, a log line, the page title or a network call it was not meant for.
 
-  Add unit tests that push hostile payloads through each path. Findings must be resolved or explicitly accepted, and the PR body says the check passed.
+  Add unit tests that push hostile payloads through each path. Findings must be resolved, and the PR body says the check passed.
 
 - **MUST wait for approval before commit.** After QA and review pass, present the results and the proposed changes, then STOP and wait for the PM's explicit approval before committing (and before pushing). No exceptions — a green suite is not approval.
 - **Branch review before merge.** When pushing a branch, run a code review of the full branch diff (`main..HEAD`) — correctness, tests, and the spec's acceptance criteria for that ticket.
