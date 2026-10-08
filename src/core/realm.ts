@@ -206,6 +206,55 @@ export function growRivals(realm: Realm): Realm {
   return { ...realm, rivals: realm.rivals.map((r) => ({ ...r, power: r.power * by })) };
 }
 
+/** Gold prices of the rival actions (docs/design.md §7). */
+export const RIVAL_ACTIONS = { scoutGold: 15, tributeGold: 30 } as const;
+
+/** What the UI may show of a rival: ruler, trait and power only once it is scouted (§7). */
+export type RivalView =
+  | { name: string; hostile: boolean; scouted: false }
+  | { name: string; hostile: boolean; scouted: true; ruler: string; trait: Trait; power: number };
+
+/** A rival as the UI may see it; an unscouted rival's hidden stats are left out, not blanked. */
+export function rivalView(rival: Rival): RivalView {
+  const { name, hostile } = rival;
+  if (!rival.scouted) return { name, hostile, scouted: false };
+  return {
+    name,
+    hostile,
+    scouted: true,
+    ruler: rival.ruler,
+    trait: rival.trait,
+    power: rival.power,
+  };
+}
+
+/** Returns the realm with rival `index` replaced by `change(rival)`. */
+function updateRival(realm: Realm, index: number, change: (r: Rival) => Rival): Realm {
+  return { ...realm, rivals: realm.rivals.map((r, i) => (i === index ? change(r) : r)) };
+}
+
+/**
+ * Scouts rival `index` for 15 gold, revealing its ruler, power and trait (§7).
+ * Nothing changes if there is no such rival, it is already scouted, or gold is short.
+ */
+export function scout(realm: Realm, index: number): Realm {
+  const rival = realm.rivals[index];
+  const cost = { gold: RIVAL_ACTIONS.scoutGold };
+  if (!rival || rival.scouted || !canAfford(realm, cost)) return realm;
+  return updateRival(pay(realm, cost), index, (r) => ({ ...r, scouted: true }));
+}
+
+/**
+ * Pays rival `index` 30 gold of tribute, putting a hostile rival at peace (§7).
+ * Nothing changes if there is no such rival, it is already at peace, or gold is short.
+ */
+export function tribute(realm: Realm, index: number): Realm {
+  const rival = realm.rivals[index];
+  const cost = { gold: RIVAL_ACTIONS.tributeGold };
+  if (!rival || !rival.hostile || !canAfford(realm, cost)) return realm;
+  return updateRival(pay(realm, cost), index, (r) => ({ ...r, hostile: false }));
+}
+
 /** An amount of each store; resources left out cost nothing. */
 export type Cost = Partial<Record<Resource, number>>;
 
