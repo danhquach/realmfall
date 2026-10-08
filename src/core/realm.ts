@@ -13,19 +13,126 @@ export type Building = (typeof BUILDINGS)[number];
 
 /** docs/design.md §9. */
 export const TRAITS = [
-  'poisonArchers',
-  'horseLords',
-  'dwarvenSmiths',
   'fertileValleys',
   'timberClans',
+  'dwarvenSmiths',
   'merchantGuilds',
-  'stoneHalls',
+  'poisonArchers',
+  'horseLords',
+  'warriorCreed',
+  'goldenAge',
 ] as const;
 export type Trait = (typeof TRAITS)[number];
+
+export const TIERS = ['common', 'fine', 'noble', 'royal', 'mythic'] as const;
+export type Tier = (typeof TIERS)[number];
+
+/** Sell price of a duplicate and the first ring whose rivals hold the tier (§9). */
+export const TIER_INFO: Record<Tier, { name: string; sellGold: number; fromRing: number }> = {
+  common: { name: 'Common', sellGold: 40, fromRing: 1 },
+  fine: { name: 'Fine', sellGold: 75, fromRing: 2 },
+  noble: { name: 'Noble', sellGold: 150, fromRing: 3 },
+  royal: { name: 'Royal', sellGold: 300, fromRing: 4 },
+  mythic: { name: 'Mythic', sellGold: 600, fromRing: 6 },
+};
+
+/**
+ * What a slotted trait can change, each as an added fraction (+0.5 is +50%):
+ * job output, tax, upkeep, unit and army power, march time and rival growth per year.
+ */
+export const STATS = [
+  'farmer',
+  'woodcutter',
+  'miner',
+  'tax',
+  'soldierUpkeep',
+  'cavalryUpkeep',
+  'spearmen',
+  'archers',
+  'cavalry',
+  'army',
+  'march',
+  'rivalGrowth',
+] as const;
+export type Stat = (typeof STATS)[number];
+export type Modifiers = Partial<Record<Stat, number>>;
+
+interface TraitInfo {
+  name: string;
+  tier: Tier;
+  /** Level-1 upside; each level past 1 adds +25% of it. */
+  upside: Modifiers;
+  /** Fixed at every level. Warrior creed's no-growth-at-peace downside lives in tick(). */
+  downside: Modifiers;
+}
+
+/** The trait table of docs/design.md §9. */
+export const TRAIT_INFO: Record<Trait, TraitInfo> = {
+  fertileValleys: {
+    name: 'Fertile valleys',
+    tier: 'common',
+    upside: { farmer: 0.5 },
+    downside: { miner: -0.25 },
+  },
+  timberClans: {
+    name: 'Timber clans',
+    tier: 'common',
+    upside: { woodcutter: 0.75 },
+    downside: { farmer: -0.2 },
+  },
+  dwarvenSmiths: {
+    name: 'Dwarven smiths',
+    tier: 'fine',
+    upside: { miner: 1 },
+    downside: { woodcutter: -0.25 },
+  },
+  merchantGuilds: {
+    name: 'Merchant guilds',
+    tier: 'fine',
+    upside: { tax: 0.5 },
+    downside: { soldierUpkeep: 0.25 },
+  },
+  poisonArchers: {
+    name: 'Poison archers',
+    tier: 'noble',
+    upside: { archers: 0.5 },
+    downside: { spearmen: -0.2 },
+  },
+  horseLords: {
+    name: 'Horse lords',
+    tier: 'noble',
+    upside: { cavalry: 0.5, march: -0.25 },
+    downside: { cavalryUpkeep: 0.5 },
+  },
+  warriorCreed: { name: 'Warrior creed', tier: 'royal', upside: { army: 0.3 }, downside: {} },
+  goldenAge: {
+    name: 'Golden age',
+    tier: 'mythic',
+    upside: { farmer: 0.25, woodcutter: 0.25, miner: 0.25, tax: 0.25 },
+    downside: { rivalGrowth: 0.02 },
+  },
+};
+
+/** Slots, swap price and cooldown, level cap and upside per level (docs/design.md §9). */
+export const TRAIT_RULES = {
+  slots: 3,
+  swapGoldPerPerson: 5,
+  swapCooldownYears: 5,
+  maxLevel: 5,
+  upsidePerLevel: 0.25,
+} as const;
+
+/** A trait the realm owns: its level (1–5) and spare duplicates. */
+export interface OwnedTrait {
+  level: number;
+  duplicates: number;
+}
 
 /** A rival kingdom, known only by its place name (docs/design.md §7). */
 export interface Rival {
   name: string;
+  /** Map ring it sits on, from 1; sets which trait tiers it can hold (§9). */
+  ring: number;
   trait: Trait;
   power: number;
   hostile: boolean;
@@ -62,7 +169,12 @@ export interface Realm {
   /** Housing gained from annexed rivals, +10 each (docs/design.md §7). */
   annexedHousing: number;
   rivals: Rival[];
-  traits: Trait[];
+  /** Every trait owned; only slotted ones take effect (§9). */
+  traits: Partial<Record<Trait, OwnedTrait>>;
+  /** The trait slots, null while empty. */
+  slots: (Trait | null)[];
+  /** Per slot, the first year it can be swapped again. */
+  slotReadyYear: number[];
   chronicle: ChronicleEntry[];
 }
 
@@ -109,7 +221,9 @@ export function createRealm(seed: number): Realm {
     storehouse: 0,
     annexedHousing: 0,
     rivals: startingRivals(seed),
-    traits: [],
+    traits: {},
+    slots: [null, null, null],
+    slotReadyYear: [1, 1, 1],
     chronicle: [],
   };
 }
@@ -117,6 +231,7 @@ export function createRealm(seed: number): Realm {
 /** docs/design.md §7. */
 export const RIVAL = {
   startingPowers: [20, 45, 90],
+  startingRings: [1, 1, 2],
   hostileChance: 0.6,
   growthPerYear: 0.04,
 } as const;
@@ -148,8 +263,10 @@ const NAME_TAILS = [
   'wood',
 ];
 
-/** Every trait a rival can hold. Stone halls is out of the design; #13 drops it from TRAITS. */
-const RIVAL_TRAITS = TRAITS.filter((t) => t !== 'stoneHalls');
+/** The traits a rival on `ring` can hold: every trait whose tier is unlocked there (§9). */
+export function rivalTraits(ring: number): Trait[] {
+  return TRAITS.filter((t) => TIER_INFO[TRAIT_INFO[t].tier].fromRing <= ring);
+}
 
 /** A realm name not in `taken`; once every pairing is used, a numbered one ("Fenmere 2"). */
 function rivalName(rng: Rng, taken: ReadonlySet<string>): string {
@@ -162,11 +279,20 @@ function rivalName(rng: Rng, taken: ReadonlySet<string>): string {
   return `${base} ${k}`;
 }
 
-/** A new, unscouted rival of `power`; its name differs from every name in `taken` (§7). */
-export function createRival(rng: Rng, power: number, taken: ReadonlySet<string>): Rival {
+/**
+ * A new, unscouted rival of `power` on `ring` (§7); its name differs from every
+ * name in `taken`, and its trait is one of rivalTraits(ring), each equally likely.
+ */
+export function createRival(
+  rng: Rng,
+  power: number,
+  ring: number,
+  taken: ReadonlySet<string>,
+): Rival {
   return {
     name: rivalName(rng, taken),
-    trait: pick(rng, RIVAL_TRAITS),
+    ring,
+    trait: pick(rng, rivalTraits(ring)),
     power,
     hostile: chance(rng, RIVAL.hostileChance),
     scouted: false,
@@ -180,15 +306,16 @@ export function createRival(rng: Rng, power: number, taken: ReadonlySet<string>)
 export function startingRivals(seed: number): Rival[] {
   const rng = createRng((seed ^ 0x52495641) >>> 0);
   const rivals: Rival[] = [];
-  for (const power of RIVAL.startingPowers) {
-    rivals.push(createRival(rng, power, new Set(rivals.map((r) => r.name))));
-  }
+  RIVAL.startingPowers.forEach((power, i) => {
+    const taken = new Set(rivals.map((r) => r.name));
+    rivals.push(createRival(rng, power, RIVAL.startingRings[i]!, taken));
+  });
   return rivals;
 }
 
-/** One year of rival growth: every rival's power × 1.04 (§7). */
+/** One year of rival growth: every rival's power × 1.04, or × 1.06 under Golden age (§7, §9). */
 export function growRivals(realm: Realm): Realm {
-  const by = 1 + RIVAL.growthPerYear;
+  const by = 1 + RIVAL.growthPerYear + traitModifiers(realm).rivalGrowth;
   return { ...realm, rivals: realm.rivals.map((r) => ({ ...r, power: r.power * by })) };
 }
 
@@ -287,19 +414,130 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   const strongest = Math.max(...realm.rivals.map((r) => r.power));
   const rest = realm.rivals.filter((_, i) => i !== index);
   const taken = new Set([rival.name, ...rest.map((r) => r.name)]);
-  const gold = Math.max(
-    realm.stores.gold,
-    Math.min(storeCaps(realm).gold, realm.stores.gold + rival.power),
-  );
-  return {
+  const ring = Math.max(...realm.rivals.map((r) => r.ring)) + 1;
+  const annexed: Realm = {
     ...realm,
     soldiers: realm.soldiers - lost,
     idle: realm.idle + Math.floor(rival.power / BATTLE.annexPeoplePer),
     annexedHousing: realm.annexedHousing + BATTLE.annexHousing,
-    stores: { ...realm.stores, gold },
-    traits: realm.traits.includes(rival.trait) ? realm.traits : [...realm.traits, rival.trait],
-    rivals: [...rest, createRival(rng, strongest * BATTLE.nextRivalScale, taken)],
+    stores: { ...realm.stores, gold: addGold(realm, rival.power) },
+    rivals: [...rest, createRival(rng, strongest * BATTLE.nextRivalScale, ring, taken)],
   };
+  return gainTrait(annexed, rival.trait);
+}
+
+/** Gold after adding `amount`, stopped at the gold cap but never lowering gold already over it. */
+function addGold(realm: Realm, amount: number): number {
+  const { gold } = realm.stores;
+  return Math.max(gold, Math.min(storeCaps(realm).gold, gold + amount));
+}
+
+/** A trait's name with its tier, so colour is never the only cue (§9). */
+export function traitLabel(trait: Trait): string {
+  const { name, tier } = TRAIT_INFO[trait];
+  return `${name} (${TIER_INFO[tier].name})`;
+}
+
+/** Adds a Chronicle line dated to the current year. */
+function chronicle(realm: Realm, text: string): Realm {
+  return { ...realm, chronicle: [...realm.chronicle, { year: realm.year, text }] };
+}
+
+function setOwned(realm: Realm, trait: Trait, owned: OwnedTrait): Realm {
+  return { ...realm, traits: { ...realm.traits, [trait]: owned } };
+}
+
+/** Gains `trait` at level 1, or a duplicate of it if already owned (§9). */
+export function gainTrait(realm: Realm, trait: Trait): Realm {
+  const owned = realm.traits[trait];
+  if (!owned) {
+    const next = setOwned(realm, trait, { level: 1, duplicates: 0 });
+    return chronicle(next, `Gained the trait ${traitLabel(trait)}.`);
+  }
+  const next = setOwned(realm, trait, { ...owned, duplicates: owned.duplicates + 1 });
+  return chronicle(next, `Gained a duplicate of ${traitLabel(trait)}.`);
+}
+
+/** What swapping a slotted trait costs: 5 gold per person (§9). */
+export function swapCost(realm: Realm): Cost {
+  return { gold: TRAIT_RULES.swapGoldPerPerson * population(realm) };
+}
+
+/**
+ * Puts owned `trait` into slot `slot` (§9). An empty slot fills for free. A
+ * filled slot swaps for swapCost() and then can't swap again for 5 years.
+ * Nothing changes if the slot doesn't exist, the trait isn't owned or is
+ * already slotted, the slot is cooling down, or gold is short.
+ */
+export function slotTrait(realm: Realm, slot: number, trait: Trait): Realm {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= realm.slots.length) return realm;
+  if (!realm.traits[trait] || realm.slots.includes(trait)) return realm;
+  const old = realm.slots[slot]!;
+  const slots = realm.slots.map((t, i) => (i === slot ? trait : t));
+  if (old === null) return chronicle({ ...realm, slots }, `Slotted ${traitLabel(trait)}.`);
+  const cost = swapCost(realm);
+  if (realm.year < realm.slotReadyYear[slot]! || !canAfford(realm, cost)) return realm;
+  const slotReadyYear = realm.slotReadyYear.map((y, i) =>
+    i === slot ? realm.year + TRAIT_RULES.swapCooldownYears : y,
+  );
+  const next = { ...pay(realm, cost), slots, slotReadyYear };
+  return chronicle(
+    next,
+    `Swapped ${traitLabel(old)} for ${traitLabel(trait)} for ${cost.gold} gold.`,
+  );
+}
+
+/** Duplicates needed to raise a trait from `level` to the next: 2ⁿ⁻¹ (§9). */
+export function traitUpgradeCost(level: number): number {
+  return 2 ** (level - 1);
+}
+
+/** Spends duplicates to raise `trait` one level, up to level 5; otherwise nothing changes (§9). */
+export function upgradeTrait(realm: Realm, trait: Trait): Realm {
+  const owned = realm.traits[trait];
+  if (!owned || owned.level >= TRAIT_RULES.maxLevel) return realm;
+  const cost = traitUpgradeCost(owned.level);
+  if (owned.duplicates < cost) return realm;
+  const level = owned.level + 1;
+  const next = setOwned(realm, trait, { level, duplicates: owned.duplicates - cost });
+  return chronicle(next, `Raised ${traitLabel(trait)} to level ${level}.`);
+}
+
+/**
+ * Sells one duplicate of `trait` for its tier's sell price; gold past the cap
+ * is lost (§3, §9). Nothing changes if there is no duplicate.
+ */
+export function sellDuplicate(realm: Realm, trait: Trait): Realm {
+  const owned = realm.traits[trait];
+  if (!owned || owned.duplicates === 0) return realm;
+  const gold = addGold(realm, TIER_INFO[TRAIT_INFO[trait].tier].sellGold);
+  const paid = gold - realm.stores.gold;
+  const next = setOwned({ ...realm, stores: { ...realm.stores, gold } }, trait, {
+    ...owned,
+    duplicates: owned.duplicates - 1,
+  });
+  return chronicle(next, `Sold a duplicate of ${traitLabel(trait)} for ${paid} gold.`);
+}
+
+/**
+ * Sum of every slotted trait's modifiers per stat (§9): the upside scaled by
+ * 1 + 0.25 × (level − 1), the downside as is. Unslotted traits add nothing.
+ */
+export function traitModifiers(realm: Realm): Record<Stat, number> {
+  const sum = Object.fromEntries(STATS.map((s) => [s, 0])) as Record<Stat, number>;
+  for (const trait of realm.slots) {
+    if (trait === null) continue;
+    const level = realm.traits[trait]?.level ?? 1;
+    const { upside, downside } = TRAIT_INFO[trait];
+    const by = 1 + TRAIT_RULES.upsidePerLevel * (level - 1);
+    for (const s of STATS) sum[s] += (upside[s] ?? 0) * by + (downside[s] ?? 0);
+  }
+  return sum;
+}
+
+/** True while `trait` sits in a slot. */
+export function isSlotted(realm: Realm, trait: Trait): boolean {
+  return realm.slots.includes(trait);
 }
 
 /** An amount of each store; resources left out cost nothing. */
@@ -427,9 +665,13 @@ export const SOLDIER: { readonly cost: Cost; readonly power: number } = {
   power: 2,
 };
 
-/** Field army power (§6): base power of every soldier × the Forge multiplier. */
+/**
+ * Field army power (§6): base power of every soldier × its slotted trait
+ * modifiers (spearmen and army bonuses add up) × the Forge multiplier.
+ */
 export function armyPower(realm: Realm): number {
-  return realm.soldiers * SOLDIER.power * forgeBonus(realm);
+  const m = traitModifiers(realm);
+  return realm.soldiers * SOLDIER.power * (1 + m.spearmen + m.army) * forgeBonus(realm);
 }
 
 export function workers(realm: Realm): number {
@@ -491,28 +733,29 @@ export function shortfall(realm: Realm): number {
   if (realm.stores.food > 0) return 0;
   const eaten =
     (realm.idle + workers(realm)) * RATES.civilianEats + realm.soldiers * RATES.soldierEats;
-  const produced = realm.jobs.farmer * RATES.farmerFood;
+  const produced = realm.jobs.farmer * RATES.farmerFood * (1 + traitModifiers(realm).farmer);
   return eaten > produced ? (eaten - produced) / eaten : 0;
 }
 
 /**
- * Net change per second of every store. Wood, iron and tax shrink by (1 − s)
- * while starving; Market gold doesn't.
+ * Net change per second of every store, after slotted trait modifiers (§9).
+ * Wood, iron and tax shrink by (1 − s) while starving; Market gold doesn't.
  */
 export function rates(realm: Realm): Record<Resource, number> {
   const civilians = realm.idle + workers(realm);
   const fed = 1 - shortfall(realm);
+  const m = traitModifiers(realm);
   return {
     food:
-      realm.jobs.farmer * RATES.farmerFood -
+      realm.jobs.farmer * RATES.farmerFood * (1 + m.farmer) -
       civilians * RATES.civilianEats -
       realm.soldiers * RATES.soldierEats,
-    wood: realm.jobs.woodcutter * RATES.woodcutterWood * fed,
-    iron: realm.jobs.miner * RATES.minerIron * fed,
+    wood: realm.jobs.woodcutter * RATES.woodcutterWood * (1 + m.woodcutter) * fed,
+    iron: realm.jobs.miner * RATES.minerIron * (1 + m.miner) * fed,
     gold:
-      workers(realm) * RATES.taxPerWorker * fed +
+      workers(realm) * RATES.taxPerWorker * (1 + m.tax) * fed +
       realm.buildings.market * RATES.marketGold -
-      realm.soldiers * RATES.soldierUpkeep,
+      realm.soldiers * RATES.soldierUpkeep * (1 + m.soldierUpkeep),
   };
 }
 
@@ -547,7 +790,8 @@ function loseOne(realm: Realm): Realm {
  *
  * Growth (§4): while food > 5 and population is under the housing cap, one
  * idle peasant arrives per 4 s banked. The bank empties whenever either
- * condition fails, so a freshly opened house waits a full 4 s. Rates are
+ * condition fails, so a freshly opened house waits a full 4 s. A slotted
+ * Warrior creed also stops growth while no rival is hostile (§9). Rates are
  * fixed for the whole step, so keep `dt` small (the loop uses STEP).
  *
  * Years (§10): year n begins at (n − 1) × 8 s of game time. Every year passed
@@ -563,7 +807,9 @@ export function tick(realm: Realm, dt: number): Realm {
   let growth = realm.growth + dt;
   const cap = housingCap(realm);
   const others = workers(realm) + realm.soldiers;
-  const canGrow = () => stores.food > PEOPLE.growthMinFood && idle + others < cap;
+  // Warrior creed's downside (§9): no growth while at peace with every rival.
+  const creedHalts = isSlotted(realm, 'warriorCreed') && !realm.rivals.some((r) => r.hostile);
+  const canGrow = () => !creedHalts && stores.food > PEOPLE.growthMinFood && idle + others < cap;
   while (canGrow() && growth >= PEOPLE.growthEvery) {
     idle += 1;
     growth -= PEOPLE.growthEvery;
