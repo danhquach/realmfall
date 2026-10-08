@@ -1,0 +1,22 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f1ea;
+  --ink: #2a2724;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1a18;
+    --ink: #e8e3d9;
+  }
+}
+body {
+  margin: 0;
+  padding: 24px 16px;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    15px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
