@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createRng } from './rng.ts';
 import {
   RESOURCES,
   SOLDIER,
@@ -7,8 +8,11 @@ import {
   assign,
   build,
   buildingCost,
+  RIVAL,
   canAfford,
   createRealm,
+  createRival,
+  growRivals,
   disband,
   forgeBonus,
   housingCap,
@@ -17,6 +21,7 @@ import {
   rates,
   safeAmounts,
   shortfall,
+  startingRivals,
   storeCaps,
   storehouseLevel,
   tick,
@@ -85,7 +90,7 @@ describe('createRealm', () => {
     expect(realm.year).toBe(1);
     expect(realm.ruler.age).toBe(45);
     expect(realm.buildings).toEqual({ hut: 0, market: 0, forge: 0 });
-    expect(realm.rivals).toEqual([]);
+    expect(realm.rivals.map((r) => r.power)).toEqual([20, 45, 90]);
     expect(realm.traits).toEqual([]);
     expect(realm.chronicle).toEqual([]);
   });
@@ -105,7 +110,7 @@ describe('createRealm', () => {
       hostile: true,
       scouted: false,
     });
-    expect(createRealm(1).rivals).toEqual([]);
+    expect(createRealm(1).rivals).toHaveLength(3);
   });
 });
 
@@ -823,6 +828,69 @@ describe('soldiers and army power (design §6)', () => {
     const before = structuredClone(realm);
     train(realm, 2);
     disband({ ...realm, soldiers: 2 });
+    expect(realm).toEqual(before);
+  });
+});
+
+describe('rivals', () => {
+  it('rolls the same rivals from the same seed', () => {
+    expect(createRealm(99).rivals).toEqual(createRealm(99).rivals);
+    expect(startingRivals(12345)).toEqual(startingRivals(12345));
+  });
+
+  it('rolls different rivals from different seeds', () => {
+    const names = (seed: number) => startingRivals(seed).map((r) => r.name);
+    expect(names(1)).not.toEqual(names(2));
+  });
+
+  it('starts at power 20, 45 and 90, unscouted (design §7)', () => {
+    for (const seed of [0, 1, 2, 0xffffffff]) {
+      const rivals = startingRivals(seed);
+      expect(rivals.map((r) => r.power)).toEqual([20, 45, 90]);
+      expect(rivals.every((r) => !r.scouted)).toBe(true);
+    }
+  });
+
+  it('never repeats a name within a run', () => {
+    for (let seed = 0; seed < 500; seed++) {
+      const names = startingRivals(seed).map((r) => r.name);
+      expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it('keeps names unique past the end of the name pool', () => {
+    const rng = createRng(3);
+    const taken = new Set<string>();
+    for (let i = 0; i < 300; i++) {
+      const { name } = createRival(rng, 1, taken);
+      expect(taken.has(name)).toBe(false);
+      taken.add(name);
+    }
+  });
+
+  it('gives each rival a King or Queen and a design trait', () => {
+    for (let seed = 0; seed < 200; seed++) {
+      for (const r of startingRivals(seed)) {
+        expect(r.ruler).toMatch(/^(King|Queen) [A-Z][a-z]+$/);
+        expect(r.trait).not.toBe('stoneHalls');
+      }
+    }
+  });
+
+  it('starts about 60% of rivals hostile', () => {
+    const rng = createRng(8);
+    const n = 10_000;
+    let hostile = 0;
+    for (let i = 0; i < n; i++) if (createRival(rng, 1, new Set()).hostile) hostile++;
+    expect(hostile / n).toBeCloseTo(RIVAL.hostileChance, 1);
+  });
+
+  it('grows every rival 4% per year and leaves the input untouched', () => {
+    const realm = createRealm(5);
+    const before = structuredClone(realm);
+    const next = growRivals(growRivals(realm));
+    expect(next.rivals.map((r) => r.power)).toEqual([20, 45, 90].map((p) => p * 1.04 * 1.04));
+    expect(next.rivals.map((r) => r.name)).toEqual(realm.rivals.map((r) => r.name));
     expect(realm).toEqual(before);
   });
 });
