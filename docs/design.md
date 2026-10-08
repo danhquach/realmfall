@@ -60,7 +60,8 @@ Storehouse is upgraded.
 | People | 4 idle, 4 farmers, 2 woodcutters, 0 miners, 0 soldiers |
 | Housing cap | 15 |
 | Store caps | 200 food, 200 wood, 50 iron, 150 gold (Storehouse level 0) |
-| Ruler | age 45 |
+| Realm | Hearthmoor, ruled by House Edric |
+| Ruler | Edric, age 45 |
 | Map | Your capital only, nearby places visible |
 
 The opening food balance is +1.0/s on purpose: the first decision is how many
