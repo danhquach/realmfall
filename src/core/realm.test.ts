@@ -9,6 +9,7 @@ import {
   build,
   buildingCost,
   RIVAL,
+  RIVAL_ACTIONS,
   canAfford,
   createRealm,
   createRival,
@@ -19,13 +20,16 @@ import {
   pay,
   population,
   rates,
+  rivalView,
   safeAmounts,
+  scout,
   shortfall,
   startingRivals,
   storeCaps,
   storehouseLevel,
   tick,
   train,
+  tribute,
   unassign,
   upgradeCost,
   upgradeStorehouse,
@@ -892,5 +896,110 @@ describe('rivals', () => {
     expect(next.rivals.map((r) => r.power)).toEqual([20, 45, 90].map((p) => p * 1.04 * 1.04));
     expect(next.rivals.map((r) => r.name)).toEqual(realm.rivals.map((r) => r.name));
     expect(realm).toEqual(before);
+  });
+});
+
+describe('scout and tribute (design §7)', () => {
+  const withGold = (gold: number, hostile = true): Realm => {
+    const realm = createRealm(7);
+    return {
+      ...realm,
+      stores: { ...realm.stores, gold },
+      rivals: realm.rivals.map((r) => ({ ...r, hostile })),
+    };
+  };
+
+  it('costs 15 gold to scout and 30 to pay tribute', () => {
+    expect(RIVAL_ACTIONS).toEqual({ scoutGold: 15, tributeGold: 30 });
+  });
+
+  it('scouting takes 15 gold and marks only that rival scouted', () => {
+    const realm = withGold(40);
+    const before = structuredClone(realm);
+    const next = scout(realm, 1);
+    expect(next.stores.gold).toBe(25);
+    expect(next.rivals.map((r) => r.scouted)).toEqual([false, true, false]);
+    expect(next.rivals[1]).toEqual({ ...realm.rivals[1], scouted: true });
+    expect(realm).toEqual(before);
+  });
+
+  it('does not scout a rival twice or charge for it', () => {
+    const once = scout(withGold(40), 0);
+    expect(scout(once, 0)).toBe(once);
+  });
+
+  it('does nothing when gold is short or the rival does not exist', () => {
+    const poor = withGold(14.9);
+    expect(scout(poor, 0)).toBe(poor);
+    const realm = withGold(100);
+    for (const i of [-1, 3, 1.5, NaN]) expect(scout(realm, i)).toBe(realm);
+  });
+
+  it('scouts with exactly 15 gold, leaving 0', () => {
+    expect(scout(withGold(15), 2).stores.gold).toBe(0);
+  });
+
+  it('tribute takes 30 gold and puts only that hostile rival at peace', () => {
+    const realm = withGold(40);
+    const before = structuredClone(realm);
+    const next = tribute(realm, 2);
+    expect(next.stores.gold).toBe(10);
+    expect(next.rivals.map((r) => r.hostile)).toEqual([true, true, false]);
+    expect(next.rivals[2]).toEqual({ ...realm.rivals[2], hostile: false });
+    expect(realm).toEqual(before);
+  });
+
+  it('charges nothing for tribute to a rival already at peace', () => {
+    const realm = withGold(100, false);
+    expect(tribute(realm, 0)).toBe(realm);
+  });
+
+  it('does no tribute when gold is short or the rival does not exist', () => {
+    const poor = withGold(29.9);
+    expect(tribute(poor, 0)).toBe(poor);
+    const realm = withGold(100);
+    for (const i of [-1, 3, 0.5, NaN]) expect(tribute(realm, i)).toBe(realm);
+  });
+
+  it('pays tribute with exactly 30 gold, leaving 0', () => {
+    expect(tribute(withGold(30), 0).stores.gold).toBe(0);
+  });
+
+  it('tribute does not scout, and scouting does not change stance', () => {
+    const realm = withGold(100);
+    expect(tribute(realm, 0).rivals[0]!.scouted).toBe(false);
+    expect(scout(realm, 0).rivals[0]!.hostile).toBe(true);
+  });
+});
+
+describe('rivalView (design §7)', () => {
+  const rival = createRealm(3).rivals[0]!;
+
+  it('shows only name and stance of an unscouted rival', () => {
+    const view = rivalView(rival);
+    expect(view).toEqual({ name: rival.name, hostile: rival.hostile, scouted: false });
+    expect(Object.keys(view).sort()).toEqual(['hostile', 'name', 'scouted']);
+    const text = JSON.stringify(view);
+    expect(text).not.toContain(rival.ruler);
+    expect(text).not.toContain(rival.trait);
+    expect(text).not.toContain('power');
+  });
+
+  it('shows ruler, trait and power once scouted', () => {
+    expect(rivalView({ ...rival, scouted: true })).toEqual({
+      name: rival.name,
+      hostile: rival.hostile,
+      scouted: true,
+      ruler: rival.ruler,
+      trait: rival.trait,
+      power: rival.power,
+    });
+  });
+
+  it('reveals a rival after scouting it', () => {
+    const realm = { ...createRealm(3), stores: { ...createRealm(3).stores, gold: 50 } };
+    expect(rivalView(realm.rivals[0]!).scouted).toBe(false);
+    const view = rivalView(scout(realm, 0).rivals[0]!);
+    expect(view.scouted && view.power).toBe(realm.rivals[0]!.power);
   });
 });
