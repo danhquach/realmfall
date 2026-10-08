@@ -1,3 +1,5 @@
+import { chance, createRng, pick, type Rng } from './rng.ts';
+
 /** The four stores (docs/design.md §3). */
 export const RESOURCES = ['food', 'wood', 'iron', 'gold'] as const;
 export type Resource = (typeof RESOURCES)[number];
@@ -105,10 +107,103 @@ export function createRealm(seed: number): Realm {
     desertion: 0,
     buildings: { hut: 0, market: 0, forge: 0 },
     storehouse: 0,
-    rivals: [],
+    rivals: startingRivals(seed),
     traits: [],
     chronicle: [],
   };
+}
+
+/** docs/design.md §7. */
+export const RIVAL = {
+  startingPowers: [20, 45, 90],
+  hostileChance: 0.6,
+  growthPerYear: 0.04,
+} as const;
+
+const NAME_HEADS = [
+  'Ash',
+  'Bram',
+  'Cold',
+  'Dun',
+  'Elder',
+  'Fen',
+  'Pale',
+  'Holl',
+  'Iron',
+  'Mar',
+  'Raven',
+  'Briar',
+];
+const NAME_TAILS = [
+  'ford',
+  'mere',
+  'wick',
+  'hold',
+  'moor',
+  'vale',
+  'crag',
+  'stead',
+  'reach',
+  'wood',
+];
+const RULER_NAMES = [
+  'Aldra',
+  'Berin',
+  'Cedric',
+  'Dagna',
+  'Eluned',
+  'Gareth',
+  'Hilde',
+  'Ivo',
+  'Maren',
+  'Osric',
+  'Rowena',
+  'Torin',
+];
+
+/** Every trait a rival can hold. Stone halls is out of the design; #13 drops it from TRAITS. */
+const RIVAL_TRAITS = TRAITS.filter((t) => t !== 'stoneHalls');
+
+/** A realm name not in `taken`; once every pairing is used, a numbered one ("Fenmere 2"). */
+function rivalName(rng: Rng, taken: ReadonlySet<string>): string {
+  const all = NAME_HEADS.flatMap((h) => NAME_TAILS.map((t) => h + t));
+  const free = all.filter((n) => !taken.has(n));
+  if (free.length > 0) return pick(rng, free);
+  const base = pick(rng, all);
+  let k = 2;
+  while (taken.has(`${base} ${k}`)) k++;
+  return `${base} ${k}`;
+}
+
+/** A new, unscouted rival of `power`; its name differs from every name in `taken` (§7). */
+export function createRival(rng: Rng, power: number, taken: ReadonlySet<string>): Rival {
+  return {
+    name: rivalName(rng, taken),
+    ruler: `${pick(rng, ['King', 'Queen'])} ${pick(rng, RULER_NAMES)}`,
+    trait: pick(rng, RIVAL_TRAITS),
+    power,
+    hostile: chance(rng, RIVAL.hostileChance),
+    scouted: false,
+  };
+}
+
+/**
+ * The three starting rivals (§7), rolled from their own stream derived from
+ * the run's seed, so the same seed always gives the same rivals.
+ */
+export function startingRivals(seed: number): Rival[] {
+  const rng = createRng((seed ^ 0x52495641) >>> 0);
+  const rivals: Rival[] = [];
+  for (const power of RIVAL.startingPowers) {
+    rivals.push(createRival(rng, power, new Set(rivals.map((r) => r.name))));
+  }
+  return rivals;
+}
+
+/** One year of rival growth: every rival's power × 1.04 (§7). */
+export function growRivals(realm: Realm): Realm {
+  const by = 1 + RIVAL.growthPerYear;
+  return { ...realm, rivals: realm.rivals.map((r) => ({ ...r, power: r.power * by })) };
 }
 
 /** An amount of each store; resources left out cost nothing. */
