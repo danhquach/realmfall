@@ -6,6 +6,8 @@ import {
   STOREHOUSE,
   armyPower,
   assign,
+  attack,
+  BATTLE,
   build,
   buildingCost,
   RIVAL,
@@ -33,6 +35,7 @@ import {
   unassign,
   upgradeCost,
   upgradeStorehouse,
+  winChance,
   YEAR_SECONDS,
   type Building,
   type Realm,
@@ -1067,5 +1070,139 @@ describe('rivalView (design §7)', () => {
     expect(rivalView(realm.rivals[0]!).scouted).toBe(false);
     const view = rivalView(scout(realm, 0).rivals[0]!);
     expect(view.scouted && view.power).toBe(realm.rivals[0]!.power);
+  });
+});
+
+describe('battle and annexation (design §7)', () => {
+  const WIN = () => 0;
+  const LOSE = () => 0.999999;
+  /** A realm with `soldiers` spearmen and rival 0 at `power`. */
+  const armed = (soldiers: number, power: number): Realm => {
+    const realm = createRealm(11);
+    return {
+      ...realm,
+      soldiers,
+      stores: { ...realm.stores, gold: 50 },
+      rivals: realm.rivals.map((r, i) => (i === 0 ? { ...r, power, hostile: false } : r)),
+    };
+  };
+
+  it('twice the enemy power wins 80% of the time', () => {
+    expect(winChance(40, 20)).toBeCloseTo(0.8, 12);
+    expect(winChance(20, 40)).toBeCloseTo(0.2, 12);
+    expect(winChance(30, 30)).toBe(0.5);
+  });
+
+  it('follows P² / (P² + E²), with no army never winning', () => {
+    expect(winChance(3, 4)).toBeCloseTo(9 / 25, 12);
+    expect(winChance(0, 20)).toBe(0);
+    expect(winChance(NaN, 20)).toBe(0);
+    expect(winChance(10, 0)).toBe(1);
+    expect(winChance(1e200, 1e200)).toBe(0.5);
+  });
+
+  it('rolls the win chance: an 80% battle is won by rolls under 0.8 only', () => {
+    // 10 spearmen = 20 power against 10: 80%.
+    const realm = armed(10, 10);
+    expect(attack(realm, 0, () => 0.79).rivals).toHaveLength(3);
+    expect(attack(realm, 0, () => 0.79).annexedHousing).toBe(10);
+    expect(attack(realm, 0, () => 0.8).annexedHousing).toBe(0);
+  });
+
+  it('a win loses ⌈soldiers × (0.1 + 0.3 × (1 − chance))⌉ soldiers', () => {
+    // 80%: ⌈10 × 0.16⌉ = 2.
+    expect(attack(armed(10, 10), 0, WIN).soldiers).toBe(8);
+    // 25 soldiers = 50 power against 50: 50%, ⌈25 × 0.25⌉ = 7.
+    expect(attack(armed(25, 50), 0, WIN).soldiers).toBe(18);
+    // E/P = 0.25: ⌈51 × 2/17⌉ is exactly 6, not 7 from float noise.
+    expect(attack(armed(51, 25.5), 0, WIN).soldiers).toBe(45);
+    // A sure win still costs ⌈10%⌉: 1 soldier against power 0.
+    expect(attack(armed(1, 0), 0, WIN).soldiers).toBe(0);
+  });
+
+  it('a loss loses ⌈50%⌉ of soldiers; the rival gains 10% power and turns hostile', () => {
+    const realm = armed(7, 100);
+    const before = structuredClone(realm);
+    const next = attack(realm, 0, LOSE);
+    expect(next.soldiers).toBe(3);
+    expect(next.rivals[0]).toEqual({
+      ...realm.rivals[0],
+      power: expect.closeTo(110),
+      hostile: true,
+    });
+    expect(next.rivals.slice(1)).toEqual(realm.rivals.slice(1));
+    expect(next.stores).toEqual(realm.stores);
+    expect(next.annexedHousing).toBe(0);
+    expect(realm).toEqual(before);
+  });
+
+  it('a loss with one soldier loses that soldier', () => {
+    expect(attack(armed(1, 100), 0, LOSE).soldiers).toBe(0);
+  });
+
+  it('annexation adds 10 housing, ⌊E / 8⌋ people, E gold and the trait', () => {
+    const realm = { ...armed(40, 45), traits: [] };
+    const before = structuredClone(realm);
+    const next = attack(realm, 0, WIN);
+    expect(next.annexedHousing).toBe(10);
+    expect(housingCap(next)).toBe(housingCap(realm) + 10);
+    expect(next.idle).toBe(realm.idle + 5);
+    expect(next.stores.gold).toBe(95);
+    expect(next.traits).toEqual([realm.rivals[0]!.trait]);
+    expect(next.rivals.map((r) => r.name)).not.toContain(realm.rivals[0]!.name);
+    expect(realm).toEqual(before);
+  });
+
+  it('annexed gold stops at the gold cap', () => {
+    const realm = armed(100, 120);
+    expect(attack(realm, 0, WIN).stores.gold).toBe(storeCaps(realm).gold);
+  });
+
+  it('annexed gold never lowers gold already over the cap', () => {
+    const realm = armed(100, 10);
+    const over = { ...realm, stores: { ...realm.stores, gold: 999 } };
+    expect(attack(over, 0, WIN).stores.gold).toBe(999);
+  });
+
+  it('annexed people arrive even past the housing cap', () => {
+    const realm = armed(40, 80);
+    const full = { ...realm, idle: housingCap(realm) };
+    expect(attack(full, 0, WIN).idle).toBe(full.idle + 10);
+  });
+
+  it('does not add a trait the realm already owns', () => {
+    const realm = armed(40, 20);
+    const owned = { ...realm, traits: [realm.rivals[0]!.trait] };
+    expect(attack(owned, 0, WIN).traits).toEqual(owned.traits);
+  });
+
+  it('replaces the annexed rival with a new one at 1.5× the strongest', () => {
+    const realm = armed(200, 20);
+    const strongest = Math.max(...realm.rivals.map((r) => r.power));
+    const next = attack(realm, 0, WIN);
+    expect(next.rivals).toHaveLength(3);
+    expect(next.rivals.slice(0, 2)).toEqual(realm.rivals.slice(1));
+    const fresh = next.rivals[2]!;
+    expect(fresh.power).toBe(strongest * BATTLE.nextRivalScale);
+    expect(fresh.scouted).toBe(false);
+    expect(new Set(next.rivals.map((r) => r.name)).size).toBe(3);
+    expect(fresh.name).not.toBe(realm.rivals[0]!.name);
+  });
+
+  it('annexing the strongest rival scales the next from its power', () => {
+    const realm = armed(500, 1000);
+    expect(attack(realm, 0, WIN).rivals[2]!.power).toBe(1500);
+  });
+
+  it('is deterministic for the same seeded roll', () => {
+    const realm = armed(30, 45);
+    expect(attack(realm, 0, createRng(5))).toEqual(attack(realm, 0, createRng(5)));
+  });
+
+  it('does nothing with no soldiers or no such rival', () => {
+    const empty = armed(0, 1);
+    expect(attack(empty, 0, WIN)).toBe(empty);
+    const realm = armed(10, 10);
+    for (const i of [-1, 3, 0.5, NaN]) expect(attack(realm, i, WIN)).toBe(realm);
   });
 });

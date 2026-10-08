@@ -59,6 +59,8 @@ export interface Realm {
   buildings: Record<Building, number>;
   /** Storehouse level, from 0 (docs/design.md §5). */
   storehouse: number;
+  /** Housing gained from annexed rivals, +10 each (docs/design.md §7). */
+  annexedHousing: number;
   rivals: Rival[];
   traits: Trait[];
   chronicle: ChronicleEntry[];
@@ -105,6 +107,7 @@ export function createRealm(seed: number): Realm {
     desertion: 0,
     buildings: { hut: 0, market: 0, forge: 0 },
     storehouse: 0,
+    annexedHousing: 0,
     rivals: startingRivals(seed),
     traits: [],
     chronicle: [],
@@ -235,6 +238,68 @@ export function tribute(realm: Realm, index: number): Realm {
   const cost = { gold: RIVAL_ACTIONS.tributeGold };
   if (!rival || !rival.hostile || !canAfford(realm, cost)) return realm;
   return updateRival(pay(realm, cost), index, (r) => ({ ...r, hostile: false }));
+}
+
+/** Battle and annexation numbers (docs/design.md §7). */
+export const BATTLE = {
+  winLossBase: 0.1,
+  winLossRisk: 0.3,
+  defeatLoss: 0.5,
+  defeatRivalGrowth: 0.1,
+  annexHousing: 10,
+  annexPeoplePer: 8,
+  nextRivalScale: 1.5,
+} as const;
+
+/**
+ * Win chance P² / (P² + E²) (§7), written as 1 / (1 + (E/P)²) so huge powers
+ * don't overflow. No army never wins; a powerless defender always loses.
+ */
+export function winChance(p: number, e: number): number {
+  if (!(p > 0)) return 0;
+  if (!(e > 0)) return 1;
+  return 1 / (1 + (e / p) ** 2);
+}
+
+/**
+ * Sends the field army against rival `index`, rolling the win chance on `rng` (§7).
+ * Win: lose ⌈soldiers × (0.1 + 0.3 × (1 − chance))⌉ soldiers and annex the
+ * rival: +10 housing, +⌊E / 8⌋ idle people, +E gold (up to the cap) and its
+ * trait; a new rival appears at 1.5× the strongest rival's power.
+ * Loss: lose ⌈50%⌉ of soldiers; the rival gains +10% power and turns hostile.
+ * Nothing changes if there is no such rival or no soldiers.
+ */
+export function attack(realm: Realm, index: number, rng: Rng): Realm {
+  const rival = realm.rivals[index];
+  if (!rival || realm.soldiers === 0) return realm;
+  const odds = winChance(armyPower(realm), rival.power);
+  if (!chance(rng, odds)) {
+    const lost = Math.ceil(realm.soldiers * BATTLE.defeatLoss);
+    return updateRival({ ...realm, soldiers: realm.soldiers - lost }, index, (r) => ({
+      ...r,
+      power: r.power * (1 + BATTLE.defeatRivalGrowth),
+      hostile: true,
+    }));
+  }
+  const share = BATTLE.winLossBase + BATTLE.winLossRisk * (1 - odds);
+  // The epsilon keeps float noise from rounding an exact whole loss up by one.
+  const lost = Math.min(realm.soldiers, Math.ceil(realm.soldiers * share - 1e-9));
+  const strongest = Math.max(...realm.rivals.map((r) => r.power));
+  const rest = realm.rivals.filter((_, i) => i !== index);
+  const taken = new Set([rival.name, ...rest.map((r) => r.name)]);
+  const gold = Math.max(
+    realm.stores.gold,
+    Math.min(storeCaps(realm).gold, realm.stores.gold + rival.power),
+  );
+  return {
+    ...realm,
+    soldiers: realm.soldiers - lost,
+    idle: realm.idle + Math.floor(rival.power / BATTLE.annexPeoplePer),
+    annexedHousing: realm.annexedHousing + BATTLE.annexHousing,
+    stores: { ...realm.stores, gold },
+    traits: realm.traits.includes(rival.trait) ? realm.traits : [...realm.traits, rival.trait],
+    rivals: [...rest, createRival(rng, strongest * BATTLE.nextRivalScale, taken)],
+  };
 }
 
 /** An amount of each store; resources left out cost nothing. */
@@ -376,7 +441,7 @@ export function population(realm: Realm): number {
 }
 
 export function housingCap(realm: Realm): number {
-  return PEOPLE.baseHousing + realm.buildings.hut * PEOPLE.hutHousing;
+  return PEOPLE.baseHousing + realm.buildings.hut * PEOPLE.hutHousing + realm.annexedHousing;
 }
 
 /** Whole, non-negative count; anything else (NaN, negative, fractional part) is trimmed. */
