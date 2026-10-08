@@ -95,7 +95,8 @@ it empties.
 
 ## 5. Buildings
 
-Each building's cost grows with how many you already own (n = number built).
+Each building's cost grows with how many you already own (n = number built),
+rounded up to a whole number.
 
 | Building | Cost | Effect |
 |---|---|---|

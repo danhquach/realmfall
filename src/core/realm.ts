@@ -76,6 +76,7 @@ export const RATES = {
   soldierEats: 1,
   taxPerWorker: 0.25,
   soldierUpkeep: 0.5,
+  marketGold: 1,
 } as const;
 
 /** docs/design.md §3 and §4. */
@@ -197,6 +198,38 @@ export function upgradeStorehouse(realm: Realm): Realm {
   return { ...pay(realm, cost), storehouse: realm.storehouse + 1 };
 }
 
+/** Base cost and growth per building owned (docs/design.md §5). */
+export const BUILDING_COSTS: Record<Building, { base: Cost; growth: number }> = {
+  hut: { base: { wood: 25 }, growth: 1.3 },
+  market: { base: { wood: 40, gold: 30 }, growth: 1.5 },
+  forge: { base: { wood: 60, iron: 20 }, growth: 2 },
+};
+
+/** Army power bonus per Forge (§6: power × (1 + 0.5 × forges)). */
+export const FORGE_BONUS = 0.5;
+
+/** What the next `building` costs: base × growthⁿ for n already built, rounded up. */
+export function buildingCost(realm: Realm, building: Building): Cost {
+  const { base, growth } = BUILDING_COSTS[building];
+  const by = growth ** realm.buildings[building];
+  const cost: Cost = {};
+  for (const k of RESOURCES) if (base[k] !== undefined) cost[k] = Math.ceil(base[k] * by);
+  return cost;
+}
+
+/** Builds one `building` if its cost can be paid; otherwise nothing changes. */
+export function build(realm: Realm, building: Building): Realm {
+  const cost = buildingCost(realm, building);
+  if (!canAfford(realm, cost)) return realm;
+  const paid = pay(realm, cost);
+  return { ...paid, buildings: { ...paid.buildings, [building]: paid.buildings[building] + 1 } };
+}
+
+/** The Forge multiplier on army power (§6). */
+export function forgeBonus(realm: Realm): number {
+  return 1 + FORGE_BONUS * realm.buildings.forge;
+}
+
 export function workers(realm: Realm): number {
   return realm.jobs.farmer + realm.jobs.woodcutter + realm.jobs.miner;
 }
@@ -241,7 +274,10 @@ export function shortfall(realm: Realm): number {
   return eaten > produced ? (eaten - produced) / eaten : 0;
 }
 
-/** Net change per second of every store. Wood, iron and tax shrink by (1 − s) while starving. */
+/**
+ * Net change per second of every store. Wood, iron and tax shrink by (1 − s)
+ * while starving; Market gold doesn't.
+ */
 export function rates(realm: Realm): Record<Resource, number> {
   const civilians = realm.idle + workers(realm);
   const fed = 1 - shortfall(realm);
@@ -252,7 +288,10 @@ export function rates(realm: Realm): Record<Resource, number> {
       realm.soldiers * RATES.soldierEats,
     wood: realm.jobs.woodcutter * RATES.woodcutterWood * fed,
     iron: realm.jobs.miner * RATES.minerIron * fed,
-    gold: workers(realm) * RATES.taxPerWorker * fed - realm.soldiers * RATES.soldierUpkeep,
+    gold:
+      workers(realm) * RATES.taxPerWorker * fed +
+      realm.buildings.market * RATES.marketGold -
+      realm.soldiers * RATES.soldierUpkeep,
   };
 }
 

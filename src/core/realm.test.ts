@@ -3,8 +3,11 @@ import {
   RESOURCES,
   STOREHOUSE,
   assign,
+  build,
+  buildingCost,
   canAfford,
   createRealm,
+  forgeBonus,
   housingCap,
   pay,
   population,
@@ -17,6 +20,7 @@ import {
   unassign,
   upgradeCost,
   upgradeStorehouse,
+  type Building,
   type Realm,
 } from './realm.ts';
 
@@ -631,5 +635,102 @@ describe('canAfford / pay', () => {
   it("can't pay a cost above the store cap, however long you wait", () => {
     const realm = { ...createRealm(1), jobs: { farmer: 4, woodcutter: 6, miner: 0 } };
     expect(canAfford(tick(realm, 10000), { wood: 201 })).toBe(false);
+  });
+});
+
+describe('buildings (design §5)', () => {
+  const owning = (building: Building, n: number): Realm => {
+    const realm = createRealm(1);
+    return { ...realm, buildings: { ...realm.buildings, [building]: n } };
+  };
+  const costs = (building: Building) =>
+    [0, 1, 2, 3, 4, 5].map((n) => buildingCost(owning(building, n), building));
+
+  it('Hut costs 25 × 1.3ⁿ wood, rounded up, for n = 0..5', () => {
+    expect(costs('hut')).toEqual([25, 33, 43, 55, 72, 93].map((wood) => ({ wood })));
+  });
+
+  it('Market costs 40 × 1.5ⁿ wood and 30 × 1.5ⁿ gold, rounded up, for n = 0..5', () => {
+    expect(costs('market')).toEqual([
+      { wood: 40, gold: 30 },
+      { wood: 60, gold: 45 },
+      { wood: 90, gold: 68 },
+      { wood: 135, gold: 102 },
+      { wood: 203, gold: 152 },
+      { wood: 304, gold: 228 },
+    ]);
+  });
+
+  it('Forge costs 60 × 2ⁿ wood and 20 × 2ⁿ iron for n = 0..5', () => {
+    expect(costs('forge')).toEqual([
+      { wood: 60, iron: 20 },
+      { wood: 120, iron: 40 },
+      { wood: 240, iron: 80 },
+      { wood: 480, iron: 160 },
+      { wood: 960, iron: 320 },
+      { wood: 1920, iron: 640 },
+    ]);
+  });
+
+  it('builds one, pays its cost and raises the next price', () => {
+    const realm = createRealm(1); // 40 wood
+    const next = build(realm, 'hut');
+    expect(next.buildings.hut).toBe(1);
+    expect(next.stores.wood).toBe(15);
+    expect(buildingCost(next, 'hut')).toEqual({ wood: 33 });
+  });
+
+  it("can't build without the stores", () => {
+    const realm = createRealm(1); // 40 wood, 10 iron, 40 gold
+    const noWood = { ...realm, stores: { ...realm.stores, wood: 24 } };
+    expect(build(noWood, 'hut')).toBe(noWood);
+    // Each resource in the cost must be covered: wood alone isn't enough.
+    const noGold = { ...realm, stores: { ...realm.stores, wood: 100, gold: 29 } };
+    expect(build(noGold, 'market')).toBe(noGold);
+    const noIron = { ...realm, stores: { ...realm.stores, wood: 100 } };
+    expect(build(noIron, 'forge')).toBe(noIron);
+  });
+
+  it("can't build when the cost is above the store cap", () => {
+    // The 4th Forge needs 160 iron; level 0 holds at most 50.
+    const realm = {
+      ...owning('forge', 3),
+      jobs: { farmer: 6, woodcutter: 10, miner: 10 },
+    };
+    const later = tick(realm, 10000);
+    expect(later.stores.iron).toBe(50);
+    expect(build(later, 'forge')).toBe(later);
+    const upgraded = { ...later, storehouse: 2, stores: { ...later.stores, wood: 480, iron: 160 } };
+    expect(build(upgraded, 'forge').buildings.forge).toBe(4);
+  });
+
+  it('does not mutate its input', () => {
+    const realm = createRealm(1);
+    const before = structuredClone(realm);
+    build(realm, 'hut');
+    expect(realm).toEqual(before);
+  });
+
+  it('Hut adds 5 housing', () => {
+    expect(housingCap(owning('hut', 2))).toBe(housingCap(createRealm(1)) + 10);
+  });
+
+  it('Market adds 1 gold/s, untouched by starvation', () => {
+    const base = rates(createRealm(1)).gold;
+    expect(rates(owning('market', 3)).gold).toBeCloseTo(base + 3);
+    const starving = {
+      ...owning('market', 2),
+      stores: { food: 0, wood: 0, iron: 0, gold: 0 },
+      soldiers: 100,
+    };
+    const s = shortfall(starving);
+    expect(s).toBeGreaterThan(0);
+    expect(rates(starving).gold).toBeCloseTo(6 * 0.25 * (1 - s) + 2 - 100 * 0.5);
+  });
+
+  it('Forge adds +50% army power each', () => {
+    expect(forgeBonus(createRealm(1))).toBe(1);
+    expect(forgeBonus(owning('forge', 1))).toBe(1.5);
+    expect(forgeBonus(owning('forge', 3))).toBe(2.5);
   });
 });
