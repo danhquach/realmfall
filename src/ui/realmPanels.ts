@@ -143,10 +143,7 @@ export function mountRealmPanels(root: HTMLElement, act: Act): (realm: Realm) =>
 
   return (realm) => {
     setText(title, realm.name);
-    setText(
-      subtitle,
-      `Year ${realm.year} · ${realm.ruler.name}, age ${realm.ruler.age} · ${realm.dynasty}`,
-    );
+    setText(subtitle, `Year ${realm.year}`);
 
     const r = rates(realm);
     const caps = storeCaps(realm);

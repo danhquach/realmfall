@@ -91,10 +91,8 @@ describe('createRealm', () => {
     const realm = createRealm(7);
     expect(realm.seed).toBe(7);
     expect(realm.name).toBe('Hearthmoor');
-    expect(realm.dynasty).toBe('House Edric');
     expect(realm.time).toBe(0);
     expect(realm.year).toBe(1);
-    expect(realm.ruler.age).toBe(45);
     expect(realm.buildings).toEqual({ hut: 0, market: 0, forge: 0 });
     expect(realm.rivals.map((r) => r.power)).toEqual([20, 45, 90]);
     expect(realm.traits).toEqual([]);
@@ -110,7 +108,6 @@ describe('createRealm', () => {
     const a = createRealm(1);
     a.rivals.push({
       name: 'X',
-      ruler: 'Y',
       trait: 'stoneHalls',
       power: 1,
       hostile: true,
@@ -874,10 +871,11 @@ describe('rivals', () => {
     }
   });
 
-  it('gives each rival a King or Queen and a design trait', () => {
+  it('gives each rival a place name only, no ruler, and a design trait', () => {
     for (let seed = 0; seed < 200; seed++) {
       for (const r of startingRivals(seed)) {
-        expect(r.ruler).toMatch(/^(King|Queen) [A-Z][a-z]+$/);
+        expect(r.name).toMatch(/^[A-Z][a-z]+$/);
+        expect(Object.keys(r).sort()).toEqual(['hostile', 'name', 'power', 'scouted', 'trait']);
         expect(r.trait).not.toBe('stoneHalls');
       }
     }
@@ -982,17 +980,15 @@ describe('rivalView (design §7)', () => {
     expect(view).toEqual({ name: rival.name, hostile: rival.hostile, scouted: false });
     expect(Object.keys(view).sort()).toEqual(['hostile', 'name', 'scouted']);
     const text = JSON.stringify(view);
-    expect(text).not.toContain(rival.ruler);
     expect(text).not.toContain(rival.trait);
     expect(text).not.toContain('power');
   });
 
-  it('shows ruler, trait and power once scouted', () => {
+  it('shows trait and power once scouted', () => {
     expect(rivalView({ ...rival, scouted: true })).toEqual({
       name: rival.name,
       hostile: rival.hostile,
       scouted: true,
-      ruler: rival.ruler,
       trait: rival.trait,
       power: rival.power,
     });
