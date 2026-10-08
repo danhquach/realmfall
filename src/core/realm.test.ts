@@ -1,14 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   RESOURCES,
+  STOREHOUSE,
   assign,
+  canAfford,
   createRealm,
   housingCap,
+  pay,
   population,
   rates,
+  safeAmounts,
   shortfall,
+  storeCaps,
+  storehouseLevel,
   tick,
   unassign,
+  upgradeCost,
+  upgradeStorehouse,
   type Realm,
 } from './realm.ts';
 
@@ -489,5 +497,139 @@ describe('desertion (design §6)', () => {
     const realm = run({ ...broke, soldiers: 0 }, 10);
     expect(realm.soldiers).toBe(0);
     expect(realm.desertion).toBe(0);
+  });
+});
+
+describe('store caps (design §3)', () => {
+  it('starts every store under its level 0 cap', () => {
+    const realm = createRealm(1);
+    expect(realm.storehouse).toBe(0);
+    for (const k of RESOURCES) expect(realm.stores[k]).toBeLessThan(storeCaps(realm)[k]);
+  });
+
+  it('stops each store at its cap and loses the rest', () => {
+    const realm = {
+      ...createRealm(1),
+      idle: 0,
+      jobs: { farmer: 20, woodcutter: 10, miner: 10 },
+    };
+    const next = tick(realm, 1000);
+    expect(next.stores).toEqual({ food: 200, wood: 200, iron: 50, gold: 150 });
+    expect(tick(next, 10).stores).toEqual(next.stores);
+  });
+
+  it('clamps a store already over its cap down to the cap', () => {
+    const over = { ...createRealm(1), stores: { food: 900, wood: 900, iron: 900, gold: 900 } };
+    expect(tick(over, 0.25).stores).toEqual(storeCaps(over));
+  });
+
+  it('uses the caps of the current Storehouse level', () => {
+    const realm = {
+      ...createRealm(1),
+      storehouse: 2,
+      jobs: { farmer: 0, woodcutter: 20, miner: 0 },
+    };
+    expect(tick(realm, 1000).stores.wood).toBe(2000);
+  });
+});
+
+describe('Storehouse (design §5)', () => {
+  const rich = (level: number): Realm => ({
+    ...createRealm(1),
+    storehouse: level,
+    stores: { ...storehouseLevel(level).caps },
+  });
+
+  it('matches the design table for levels 0–3', () => {
+    expect(STOREHOUSE.map((l) => l.caps)).toEqual([
+      { food: 200, wood: 200, iron: 50, gold: 150 },
+      { food: 500, wood: 600, iron: 120, gold: 400 },
+      { food: 1500, wood: 2000, iron: 400, gold: 1200 },
+      { food: 5000, wood: 6000, iron: 1200, gold: 4000 },
+    ]);
+    expect(STOREHOUSE.map((l) => l.safe)).toEqual([
+      { food: 0, wood: 0, iron: 0, gold: 0 },
+      { food: 50, wood: 60, iron: 12, gold: 40 },
+      { food: 200, wood: 250, iron: 50, gold: 150 },
+      { food: 750, wood: 900, iron: 180, gold: 600 },
+    ]);
+    expect(STOREHOUSE.map((l) => l.cost)).toEqual([
+      {},
+      { wood: 60 },
+      { wood: 200, iron: 30 },
+      { wood: 600, iron: 120, gold: 100 },
+    ]);
+  });
+
+  it('multiplies caps, safe amounts and cost by 3 at level 4, and again at 5', () => {
+    expect(storehouseLevel(4)).toEqual({
+      caps: { food: 15000, wood: 18000, iron: 3600, gold: 12000 },
+      safe: { food: 2250, wood: 2700, iron: 540, gold: 1800 },
+      cost: { wood: 1800, iron: 360, gold: 300 },
+    });
+    expect(storehouseLevel(5).caps.food).toBe(45000);
+    expect(storehouseLevel(5).cost).toEqual({ wood: 5400, iron: 1080, gold: 900 });
+  });
+
+  it('upgrades level by level, paying each cost and raising the caps', () => {
+    for (let level = 0; level <= 4; level++) {
+      const before = rich(level);
+      const cost = upgradeCost(before);
+      const after = upgradeStorehouse(before);
+      expect(after.storehouse).toBe(level + 1);
+      for (const k of RESOURCES) {
+        expect(after.stores[k]).toBe(before.stores[k] - (cost[k] ?? 0));
+        expect(storeCaps(after)[k]).toBeGreaterThan(storeCaps(before)[k]);
+        expect(safeAmounts(after)[k]).toBeGreaterThan(safeAmounts(before)[k]);
+      }
+    }
+  });
+
+  it('charges 60 wood for level 1', () => {
+    const after = upgradeStorehouse({
+      ...createRealm(1),
+      stores: { food: 0, wood: 60, iron: 0, gold: 0 },
+    });
+    expect(after.storehouse).toBe(1);
+    expect(after.stores.wood).toBe(0);
+  });
+
+  it("can't upgrade without the stores", () => {
+    const poor = { ...createRealm(1), stores: { food: 0, wood: 59, iron: 0, gold: 0 } };
+    expect(upgradeStorehouse(poor)).toBe(poor);
+    // Level 2 needs iron too: wood alone isn't enough.
+    const noIron = { ...rich(1), stores: { food: 0, wood: 600, iron: 29, gold: 0 } };
+    expect(upgradeStorehouse(noIron)).toBe(noIron);
+  });
+
+  it('does not mutate its input', () => {
+    const realm = rich(2);
+    const before = structuredClone(realm);
+    upgradeStorehouse(realm);
+    expect(realm).toEqual(before);
+  });
+
+  it('gives no safe amount at level 0', () => {
+    expect(safeAmounts(createRealm(1))).toEqual({ food: 0, wood: 0, iron: 0, gold: 0 });
+  });
+});
+
+describe('canAfford / pay', () => {
+  it('pays only when every store covers its share', () => {
+    const realm = createRealm(1);
+    expect(canAfford(realm, { wood: 40, gold: 40 })).toBe(true);
+    expect(pay(realm, { wood: 40, gold: 40 }).stores).toEqual({
+      food: 80,
+      wood: 0,
+      iron: 10,
+      gold: 0,
+    });
+    expect(canAfford(realm, { wood: 40, iron: 11 })).toBe(false);
+    expect(pay(realm, { wood: 40, iron: 11 })).toBe(realm);
+  });
+
+  it("can't pay a cost above the store cap, however long you wait", () => {
+    const realm = { ...createRealm(1), jobs: { farmer: 4, woodcutter: 6, miner: 0 } };
+    expect(canAfford(tick(realm, 10000), { wood: 201 })).toBe(false);
   });
 });
