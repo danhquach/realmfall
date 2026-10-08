@@ -47,6 +47,11 @@ inherits a weakened realm with a legacy bonus → repeat, stronger.
 
 The legacy multiplier (§10) applies to all production, tax included.
 
+Every store has a cap set by the Storehouse level (§5). A store stops filling at
+its cap and anything over it is lost, whatever the source (production, loot,
+events, offline time). A cost larger than the cap can't be paid until the
+Storehouse is upgraded.
+
 ### Starting state
 
 | | |
@@ -54,6 +59,7 @@ The legacy multiplier (§10) applies to all production, tax included.
 | Stores | 80 food, 40 wood, 10 iron, 40 gold |
 | People | 4 idle, 4 farmers, 2 woodcutters, 0 miners, 0 soldiers |
 | Housing cap | 15 |
+| Store caps | 200 food, 200 wood, 50 iron, 150 gold (Storehouse level 0) |
 | Ruler | age 45 |
 | Map | Your capital only, nearby places visible |
 
@@ -65,9 +71,27 @@ more farmers you need before anything else.
 - **Growth:** +1 idle peasant every 4 s while food > 5 and population < cap.
 - **Jobs:** idle peasants are assigned to Farmer, Woodcutter or Miner and can be
   moved back at any time. Idle peasants eat but pay no tax.
-- **Starvation:** while food is at 0 and still falling, one person dies every 2 s
-  (idle first, then workers, then soldiers).
-- **Housing cap:** raised by Huts (+5), conquest (+10) and the Stone halls trait.
+- **Starvation:** see below.
+- **Housing cap:** raised by Huts (+5) and conquest (+10). Soldiers live in
+  the same housing as everyone else; training one moves a peasant into the army
+  without changing the population.
+
+### Starvation
+
+Hunger is gradual, so a realm hit by a raid has time to rebuild its food before
+it empties.
+
+- **Shortfall:** while food is at 0, shortfall s = (food eaten − food produced)
+  ÷ food eaten, per second. If production covers consumption, s = 0 and no one
+  is hungry.
+- **People leave:** hunger builds at s per second; each 2 points of hunger, one
+  person leaves. At s = 1 (no food at all) that is one person every 2 s; at
+  s = 0.1, one every 20 s. Hunger resets to 0 once food is above 0 again.
+- **Who leaves first:** idle peasants, then miners, woodcutters and farmers (in
+  that order, so farmers stay longest), then soldiers.
+- **Penalty:** while s > 0, wood, iron and tax are multiplied by (1 − s), and
+  the realm does not grow. Food output is not reduced, so starvation can't feed
+  on itself.
 
 ## 5. Buildings
 
@@ -78,6 +102,26 @@ Each building's cost grows with how many you already own (n = number built).
 | Hut | 25 × 1.3ⁿ wood | +5 housing |
 | Market | 40 × 1.5ⁿ wood, 30 × 1.5ⁿ gold | +1 gold/s |
 | Forge | 60 × 2ⁿ wood, 20 × 2ⁿ iron | +50% army power |
+
+### Storehouse
+
+The capital has one Storehouse, upgraded level by level. Each level raises the
+cap on every store and protects a fixed amount of each from raids (§7). Caps
+differ by resource because a realm needs far more wood than iron.
+
+| Level | Food cap / safe | Wood cap / safe | Iron cap / safe | Gold cap / safe | Upgrade cost |
+|---|---|---|---|---|---|
+| 0 (start) | 200 / 0 | 200 / 0 | 50 / 0 | 150 / 0 | — |
+| 1 | 500 / 50 | 600 / 60 | 120 / 12 | 400 / 40 | 60 wood |
+| 2 | 1,500 / 200 | 2,000 / 250 | 400 / 50 | 1,200 / 150 | 200 wood, 30 iron |
+| 3 | 5,000 / 750 | 6,000 / 900 | 1,200 / 180 | 4,000 / 600 | 600 wood, 120 iron, 100 gold |
+
+Each level past 3 multiplies the previous level's caps, safe amounts and
+upgrade cost by 3.
+
+The safe amount is a number, not a percentage: at level 1 with 120 food, 50 is
+safe and a raid can only take from the other 70. Holding less than the safe
+amount means all of it is safe.
 
 ## 6. Army
 
@@ -168,7 +212,8 @@ Every 45 s a random hostile rival raids with strength E × (0.4–0.8). It targe
 your weakest garrisoned site next to its land, or your capital if none is.
 
 - **Raid on the capital:** if field army power ≥ raid strength, the raid is
-  repelled. Otherwise you lose 25% of your food and wood.
+  repelled. Otherwise you lose 25% of the food and wood above the Storehouse's
+  safe amount (§5).
 - **Raid on a site:** if the garrison's power ≥ raid strength, it holds.
   Otherwise the garrison is lost and the rival takes the site.
 
@@ -287,7 +332,6 @@ A conquered rival's trait is added to your kingdom permanently. Traits stack.
 | Fertile valleys | Farmer output +50% |
 | Timber clans | Woodcutter output +75% |
 | Merchant guilds | Tax +50% |
-| Stone halls | +10 housing |
 
 The trait pool is the main source of variety and needs to grow (see §13).
 
@@ -328,7 +372,7 @@ channel and its story.
    your stores. It needs heir traits, dynasty perks, or a choice of heir.
 2. **Tribute is too cheap.** A one-time 30 gold buys peace until a random
    event flips it. Tribute should be ongoing (gold per year).
-3. **Too few traits.** Seven traits repeat within a few conquests.
+3. **Too few traits.** Six traits repeat within a few conquests.
 4. **Time runs too fast.** An 8 s year makes a reign last about 3 minutes at 1×.
    That's good for testing, too fast for an idle game.
 5. **No offline progress.** Idle games need it; see §14.
@@ -341,13 +385,17 @@ channel and its story.
 Ordered by how much they add to the endless loop:
 
 1. **Save and offline progress.** Autosave to localStorage. On return,
-   simulate the time away (capped, e.g. 8 h) and write a Chronicle summary.
+   simulate the time away (capped, e.g. 8 h) in the same fixed 0.25 s steps as
+   live play, so store caps, growth and hunger behave exactly as they would
+   online, and write a Chronicle summary.
 2. **Bigger trait pool and trait synergies.** Some pairs of traits combine into
    a stronger effect (e.g. Dwarven smiths + Horse lords → Ironclad cavalry).
 3. **Dynasty perks.** Spend legacy on permanent perks between reigns instead of
    a flat +10%.
 4. **Research.** Scholars produce research points that unlock techs
-   (agriculture, warfare, civic).
+   (agriculture, warfare, civic). Civic techs upgrade housing: Huts become
+   Houses and then Stone houses, each holding more people, and techs such as
+   Bunk beds and Insulation add room to every house.
 5. **Citizen tiers.** Peasants → Artisans → Scholars, each needing more goods
    and unlocking better jobs.
 6. **Diplomacy.** Alliances, marriages to merge realms, spies.
@@ -365,4 +413,4 @@ first two rings) plus save and offline progress.
   engine.
 - Simulation separate from UI: a pure `tick(state, dt)` function, so balance
   can be tested and offline time simulated without rendering.
-- Unit tests on the simulation (Vitest), following the Crimson Onslaught setup.
+- Unit tests on the simulation (Vitest).
