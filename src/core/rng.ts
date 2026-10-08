@@ -14,3 +14,23 @@ export function createRng(seed: number): Rng {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+/** A whole number in [min, max], both ends inclusive. */
+export function int(rng: Rng, min: number, max: number): number {
+  if (!Number.isInteger(min) || !Number.isInteger(max) || min > max) {
+    throw new RangeError(`int: bad range [${min}, ${max}]`);
+  }
+  return min + Math.floor(rng() * (max - min + 1));
+}
+
+/** One item of a non-empty list, each equally likely. */
+export function pick<T>(rng: Rng, list: readonly T[]): T {
+  if (list.length === 0) throw new RangeError('pick: empty list');
+  // In range: the list is non-empty and int() stays within its indices.
+  return list[int(rng, 0, list.length - 1)] as T;
+}
+
+/** True with probability p: 0 never, 1 always. */
+export function chance(rng: Rng, p: number): boolean {
+  return rng() < p;
+}
