@@ -19,6 +19,9 @@ Concept stage. No code yet.
 - **Rivals.** Neighbouring kingdoms are generated with a ruler and a trait.
   They grow stronger over time, raid you when you're weak, and can be scouted,
   paid tribute, or attacked.
+- **World map.** A node map of settlements and resource sites joined by roads.
+  Claim sites with garrisons for their bonuses; march times depend on distance.
+- **Unit counters.** Spearmen, archers and cavalry counter each other in a cycle.
 - **Conquest.** A won battle annexes the rival: land, people, gold, and its
   trait, which permanently changes your kingdom (e.g. Dwarven smiths double
   mining output).
