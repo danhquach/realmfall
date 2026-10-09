@@ -139,9 +139,21 @@ export interface Rival {
   scouted: boolean;
 }
 
-/** One Chronicle line, tagged with the year it happened (docs/design.md §12). */
+/** What a Chronicle line is about; the panel filters by it (docs/design.md §12). */
+export const CHRONICLE_KINDS = [
+  'events',
+  'raids',
+  'battles',
+  'rivals',
+  'buildings',
+  'traits',
+] as const;
+export type ChronicleKind = (typeof CHRONICLE_KINDS)[number];
+
+/** One Chronicle line, tagged with the year it happened and its kind (docs/design.md §12). */
 export interface ChronicleEntry {
   year: number;
+  kind: ChronicleKind;
   text: string;
 }
 
@@ -355,7 +367,11 @@ export function scout(realm: Realm, index: number): Realm {
   if (!rival || rival.scouted || !canAfford(realm, cost)) return realm;
   const next = updateRival(pay(realm, cost), index, (r) => ({ ...r, scouted: true }));
   const power = Math.round(rival.power);
-  return chronicle(next, `Scouted ${rival.name}: power ${power}, ${traitLabel(rival.trait)}.`);
+  return chronicle(
+    next,
+    'rivals',
+    `Scouted ${rival.name}: power ${power}, ${traitLabel(rival.trait)}.`,
+  );
 }
 
 /**
@@ -367,7 +383,11 @@ export function tribute(realm: Realm, index: number): Realm {
   const cost = { gold: RIVAL_ACTIONS.tributeGold };
   if (!rival || !rival.hostile || !canAfford(realm, cost)) return realm;
   const next = updateRival(pay(realm, cost), index, (r) => ({ ...r, hostile: false }));
-  return chronicle(next, `Paid ${cost.gold} gold of tribute to ${rival.name}; now at peace.`);
+  return chronicle(
+    next,
+    'rivals',
+    `Paid ${cost.gold} gold of tribute to ${rival.name}; now at peace.`,
+  );
 }
 
 /** Battle and annexation numbers (docs/design.md §7). */
@@ -410,7 +430,7 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
       power: r.power * (1 + BATTLE.defeatRivalGrowth),
       hostile: true,
     }));
-    return chronicle(next, `Lost a battle against ${rival.name}: ${fell(lost)}.`);
+    return chronicle(next, 'battles', `Lost a battle against ${rival.name}: ${fell(lost)}.`);
   }
   const share = BATTLE.winLossBase + BATTLE.winLossRisk * (1 - odds);
   // The epsilon keeps float noise from rounding an exact whole loss up by one.
@@ -430,6 +450,7 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   };
   const won = chronicle(
     annexed,
+    'battles',
     `Conquered ${rival.name}: ${fell(lost)}; ${fresh.name} appears beyond it.`,
   );
   return gainTrait(won, rival.trait);
@@ -466,7 +487,7 @@ export function raid(realm: Realm, rng: Rng): Realm {
   const rival = pick(rng, hostile);
   const strength = rival.power * (RAID.minStrength + (RAID.maxStrength - RAID.minStrength) * rng());
   if (armyPower(realm) >= strength) {
-    return chronicle(realm, `Repelled a raid from ${rival.name}.`);
+    return chronicle(realm, 'raids', `Repelled a raid from ${rival.name}.`);
   }
   const safe = safeAmounts(realm);
   const stores = { ...realm.stores };
@@ -475,7 +496,7 @@ export function raid(realm: Realm, rng: Rng): Realm {
   const text = lost.some((n) => n > 0)
     ? `${rival.name} raided the capital: lost ${lost[0]} food and ${lost[1]} wood.`
     : `${rival.name} raided the capital but found nothing to take.`;
-  return chronicle({ ...realm, stores }, text);
+  return chronicle({ ...realm, stores }, 'raids', text);
 }
 
 /** Store `k` after adding `amount`, stopped at its cap but never lowering a store already over it. */
@@ -520,7 +541,7 @@ function windfall(realm: Realm, k: Resource, amount: number, title: string): Rea
   const value = addStore(realm, k, amount);
   const gained = Math.floor(value - realm.stores[k]);
   const next = { ...realm, stores: { ...realm.stores, [k]: value } };
-  return chronicle(next, `${title}: +${gained} ${k}.`);
+  return chronicle(next, 'events', `${title}: +${gained} ${k}.`);
 }
 
 /** Applies `event` (§11). Gains past a store's cap are lost. */
@@ -533,7 +554,7 @@ export function applyEvent(realm: Realm, event: RandomEvent, rng: Rng): Realm {
     case 'plague': {
       let next = realm;
       for (let i = 0; i < EVENT.plagueDeaths; i++) next = loseOne(next);
-      return chronicle(next, `Plague: ${EVENT.plagueDeaths} people died.`);
+      return chronicle(next, 'events', `Plague: ${EVENT.plagueDeaths} people died.`);
     }
     case 'envoy':
       return windfall(realm, 'gold', EVENT.envoyGold, "Envoy's gifts");
@@ -544,7 +565,7 @@ export function applyEvent(realm: Realm, event: RandomEvent, rng: Rng): Realm {
       const rival = realm.rivals[index]!;
       const next = updateRival(realm, index, (r) => ({ ...r, hostile: !r.hostile }));
       const now = rival.hostile ? 'is now at peace' : 'turned hostile';
-      return chronicle(next, `Change of heart: ${rival.name} ${now}.`);
+      return chronicle(next, 'rivals', `Change of heart: ${rival.name} ${now}.`);
     }
   }
 }
@@ -569,15 +590,23 @@ function fell(n: number): string {
 export const CHRONICLE_MAX = 200;
 
 /**
- * Adds a Chronicle line dated to the current year, dropping the oldest past
+ * Adds a `kind` Chronicle line dated to the current year, dropping the oldest past
  * CHRONICLE_MAX (§12).
  *
  * TODO(#27 Garrisons and claiming, #32 Rival expansion and site raids): write
  * "sites claimed and lost" lines (§8, §12) through here once sites exist.
  */
-function chronicle(realm: Realm, text: string): Realm {
-  const entries = [...realm.chronicle, { year: realm.year, text }];
+function chronicle(realm: Realm, kind: ChronicleKind, text: string): Realm {
+  const entries = [...realm.chronicle, { year: realm.year, kind, text }];
   return { ...realm, chronicle: entries.slice(-CHRONICLE_MAX) };
+}
+
+/** The lines of the `shown` kinds, newest first. Hidden lines stay in the Chronicle (§12). */
+export function chronicleView(
+  chronicle: readonly ChronicleEntry[],
+  shown: ReadonlySet<ChronicleKind>,
+): ChronicleEntry[] {
+  return chronicle.filter((e) => shown.has(e.kind)).reverse();
 }
 
 function setOwned(realm: Realm, trait: Trait, owned: OwnedTrait): Realm {
@@ -589,10 +618,10 @@ export function gainTrait(realm: Realm, trait: Trait): Realm {
   const owned = realm.traits[trait];
   if (!owned) {
     const next = setOwned(realm, trait, { level: 1, duplicates: 0 });
-    return chronicle(next, `Gained the trait ${traitLabel(trait)}.`);
+    return chronicle(next, 'traits', `Gained the trait ${traitLabel(trait)}.`);
   }
   const next = setOwned(realm, trait, { ...owned, duplicates: owned.duplicates + 1 });
-  return chronicle(next, `Gained a duplicate of ${traitLabel(trait)}.`);
+  return chronicle(next, 'traits', `Gained a duplicate of ${traitLabel(trait)}.`);
 }
 
 /** What swapping a slotted trait costs: 5 gold per person (§9). */
@@ -611,7 +640,8 @@ export function slotTrait(realm: Realm, slot: number, trait: Trait): Realm {
   if (!realm.traits[trait] || realm.slots.includes(trait)) return realm;
   const old = realm.slots[slot]!;
   const slots = realm.slots.map((t, i) => (i === slot ? trait : t));
-  if (old === null) return chronicle({ ...realm, slots }, `Slotted ${traitLabel(trait)}.`);
+  if (old === null)
+    return chronicle({ ...realm, slots }, 'traits', `Slotted ${traitLabel(trait)}.`);
   const cost = swapCost(realm);
   if (realm.year < realm.slotReadyYear[slot]! || !canAfford(realm, cost)) return realm;
   const slotReadyYear = realm.slotReadyYear.map((y, i) =>
@@ -620,6 +650,7 @@ export function slotTrait(realm: Realm, slot: number, trait: Trait): Realm {
   const next = { ...pay(realm, cost), slots, slotReadyYear };
   return chronicle(
     next,
+    'traits',
     `Swapped ${traitLabel(old)} for ${traitLabel(trait)} for ${cost.gold} gold.`,
   );
 }
@@ -637,7 +668,7 @@ export function upgradeTrait(realm: Realm, trait: Trait): Realm {
   if (owned.duplicates < cost) return realm;
   const level = owned.level + 1;
   const next = setOwned(realm, trait, { level, duplicates: owned.duplicates - cost });
-  return chronicle(next, `Raised ${traitLabel(trait)} to level ${level}.`);
+  return chronicle(next, 'traits', `Raised ${traitLabel(trait)} to level ${level}.`);
 }
 
 /**
@@ -653,7 +684,7 @@ export function sellDuplicate(realm: Realm, trait: Trait): Realm {
     ...owned,
     duplicates: owned.duplicates - 1,
   });
-  return chronicle(next, `Sold a duplicate of ${traitLabel(trait)} for ${paid} gold.`);
+  return chronicle(next, 'traits', `Sold a duplicate of ${traitLabel(trait)} for ${paid} gold.`);
 }
 
 /**
@@ -764,6 +795,7 @@ export function upgradeStorehouse(realm: Realm): Realm {
   const storehouse = realm.storehouse + 1;
   return chronicle(
     { ...pay(realm, cost), storehouse },
+    'buildings',
     `Raised the Storehouse to level ${storehouse}.`,
   );
 }
@@ -796,7 +828,7 @@ export function build(realm: Realm, building: Building): Realm {
     ...paid,
     buildings: { ...paid.buildings, [building]: paid.buildings[building] + 1 },
   };
-  return chronicle(next, `Built a ${building}.`);
+  return chronicle(next, 'buildings', `Built a ${building}.`);
 }
 
 /** The Forge multiplier on army power (§6). */

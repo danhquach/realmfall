@@ -428,6 +428,19 @@ Every meaningful change is written as one line, tagged with the year:
 buildings raised, scouting reports, sites claimed and lost, battles, raids
 and events. It's the game's main feedback channel and its story.
 
+Each line has one kind, and the panel has a toggle per kind (all on by
+default) to hide or show its lines. Filtering only changes the view: hidden
+lines stay in the Chronicle and count toward its 200-line cap.
+
+| Kind      | Lines                                                         |
+| --------- | ------------------------------------------------------------- |
+| Events    | Random events (§11), except Change of heart                   |
+| Raids     | Raids on the capital, repelled or not                         |
+| Battles   | Battles won and lost                                          |
+| Rivals    | Scouting, tribute and Change of heart                         |
+| Buildings | Buildings raised and Storehouse upgrades                      |
+| Traits    | Trait gains, duplicates, slots, swaps, upgrades and sales     |
+
 ## 13. Known issues from the prototype
 
 1. **Tribute is too cheap.** A one-time 30 gold buys peace until a random

@@ -172,3 +172,13 @@ button:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
+.chronicle .filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.chronicle .filters button[aria-pressed='false'] {
+  color: var(--muted);
+  border-style: dashed;
+}
