@@ -843,17 +843,29 @@ export function traitRng(seed: number, stream: keyof typeof TRAIT_STREAMS, n: nu
 /** Pending offers kept; past this the oldest is dropped, so an idle run can't pile them up. */
 export const OFFER_MAX = 10;
 
+/** A milestone's goal text and the count that must reach `target`. */
+export interface MilestoneInfo {
+  goal: string;
+  target: number;
+  count: (r: Realm) => number;
+  reached: (r: Realm) => boolean;
+}
+
+function milestone(goal: string, target: number, count: (r: Realm) => number): MilestoneInfo {
+  return { goal, target, count, reached: (r) => count(r) >= target };
+}
+
 /**
  * What each milestone asks (§9).
  *
  * TODO(#27 Garrisons and claiming): add "hold 5 sites" once sites exist,
  * appended last so the other milestones keep their rng streams.
  */
-export const MILESTONE_INFO: Record<Milestone, { goal: string; reached: (r: Realm) => boolean }> = {
-  people: { goal: '50 people', reached: (r) => population(r) >= 50 },
-  battles: { goal: 'win 10 battles', reached: (r) => r.battlesWon >= 10 },
-  storehouse: { goal: 'Storehouse level 3', reached: (r) => r.storehouse >= 3 },
-  raids: { goal: 'repel 5 raids', reached: (r) => r.raidsRepelled >= 5 },
+export const MILESTONE_INFO: Record<Milestone, MilestoneInfo> = {
+  people: milestone('50 people', 50, population),
+  battles: milestone('win 10 battles', 10, (r) => r.battlesWon),
+  storehouse: milestone('Storehouse level 3', 3, (r) => r.storehouse),
+  raids: milestone('repel 5 raids', 5, (r) => r.raidsRepelled),
 };
 
 /** Challenge timing and goals (§9). */
@@ -873,6 +885,66 @@ export const CHALLENGE_INFO: Record<ChallengeKind, { goal: string; years: number
   food: { goal: `stockpile ${CHALLENGE.food} food`, years: CHALLENGE.foodYears },
   raid: { goal: 'repel the next raid', years: CHALLENGE.raidYears },
 };
+
+/** "1 year" or "n years". */
+function years(n: number): string {
+  return `${n} ${n === 1 ? 'year' : 'years'}`;
+}
+
+/**
+ * The challenge line shown in the Traits and Goals panels (§9): the active
+ * challenge with its progress and years left, or when the next one comes.
+ */
+export function challengeText(realm: Realm): string {
+  const c = realm.challenge;
+  if (!c) {
+    return realm.year < realm.challengeYear
+      ? `None active. The next comes in year ${realm.challengeYear}.`
+      : `None active. One comes once you can store ${CHALLENGE.food} food but hold less, or a rival is hostile.`;
+  }
+  const goal = CHALLENGE_INFO[c.kind].goal;
+  const food = Math.min(Math.max(Math.floor(realm.stores.food), 0), CHALLENGE.food);
+  const progress = c.kind === 'food' ? `${food} / ${CHALLENGE.food} food, ` : '';
+  const left = years(Math.max(c.deadline - realm.year, 0));
+  return (
+    `${goal[0]!.toUpperCase()}${goal.slice(1)} by year ${c.deadline}: ` +
+    `${progress}${left} left. Failing costs nothing.`
+  );
+}
+
+/** One row of the Goals panel: a milestone and how close the realm is to it. */
+export interface MilestoneProgress {
+  milestone: Milestone;
+  goal: string;
+  count: number;
+  target: number;
+  reached: boolean;
+}
+
+/**
+ * Every milestone with its progress (§9). One already paid out stays reached
+ * even if its count later drops; an open one's count is capped at its target.
+ */
+export function milestoneProgress(realm: Realm): MilestoneProgress[] {
+  return MILESTONES.map((m) => {
+    const { goal, target, count } = MILESTONE_INFO[m];
+    const n = Math.min(Math.max(Math.floor(count(realm)), 0), target);
+    return { milestone: m, goal, count: n, target, reached: realm.milestones.includes(m) };
+  });
+}
+
+/**
+ * The "Next" hint in the Goals panel: the first milestone not yet reached,
+ * with its progress; once all are reached, says so.
+ *
+ * TODO(#83 Builders and construction): once buildings have requirements, hint
+ * the first locked building's requirement first ("Next: reach 15 people to
+ * unlock the Barracks"), falling back to milestones.
+ */
+export function nextGoal(realm: Realm): string {
+  const open = milestoneProgress(realm).find((p) => !p.reached);
+  return open ? `Next: ${open.goal} (${open.count} / ${open.target}).` : 'Every milestone reached.';
+}
 
 /** Trader restock interval and stock size (§9). */
 export const TRADER = { every: 10, stock: 3 } as const;
