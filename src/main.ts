@@ -2,6 +2,7 @@ import { advance, catchUp, parseSpeed } from './core/loop.ts';
 import { createRealm, type Realm } from './core/realm.ts';
 import { createRng } from './core/rng.ts';
 import { mountChronicle } from './ui/chronicle.ts';
+import { mountLayout } from './ui/layout.ts';
 import { mountRealmPanels } from './ui/realmPanels.ts';
 import { loadSave, saveRealm, startAutosave } from './storage/autosave.ts';
 
@@ -25,14 +26,10 @@ const speed = import.meta.env.DEV
   ? parseSpeed(new URLSearchParams(location.search).get('speed'))
   : 1;
 
-if (speed > 1) {
-  const note = document.createElement('p');
-  note.textContent = `Dev speed ${speed}×`;
-  root.append(note);
-}
+const layout = mountLayout(root);
 
 const renderPanels = mountRealmPanels(
-  root,
+  layout,
   (change) => {
     realm = change(realm);
     // Save each action at once, so a reload can't undo a lost battle.
@@ -41,7 +38,13 @@ const renderPanels = mountRealmPanels(
   },
   battleRng,
 );
-const renderChronicle = mountChronicle(root);
+const renderChronicle = mountChronicle(layout.tabs.chronicle);
+
+if (speed > 1) {
+  const note = document.createElement('p');
+  note.textContent = `Dev speed ${speed}×`;
+  layout.status.append(note);
+}
 
 function render(next: Realm): void {
   renderPanels(next);

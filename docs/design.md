@@ -649,8 +649,9 @@ Slots and the level cap bound the total: at most three traits, each at most
 
 ### Goals panel
 
-The first panel, so the player always sees what to work towards. Text only;
-it adds no mechanics and updates as the realm changes.
+Opens from the Goals button at the right end of the status bar (§18), so the
+player can check what to work towards from any tab. Text only; it adds no
+mechanics and updates as the realm changes, also while open.
 
 - **Next:** the first milestone not yet reached, in table order, with its
   progress: "Next: 50 people (37 / 50)." Once every milestone is reached:
@@ -815,3 +816,28 @@ The prototype's prestige reset:
   until this ships.
 - Known issue: +10% production per heir isn't worth losing half your stores.
   It needs heir traits, dynasty perks (#37), or a choice of heir.
+
+## 18. Screen layout
+
+The whole game fits in one screen with no page scroll. A panel whose content
+outgrows its area scrolls inside itself. Layout only: no mechanics, and each
+panel's text is the same wherever it sits.
+
+- **Status bar** across the top: the realm's name, the year, every store with
+  its cap and rate, and population with idle peasants. It is on screen on every
+  tab and while Goals is open. The **Goals** button sits at its right end.
+- **Goals dropdown:** starts closed, also after a reload. The button opens it
+  right under itself, right-aligned, over the Chronicle and the right edge of
+  the tabs; opening or closing it never changes the tab or scrolls anything.
+  The button, Esc or a click outside closes it. Content taller than the screen
+  scrolls inside it.
+- **Workspace:** four tabs, **Build** (People's job controls and Buildings
+  with the queue), **Army**, **Rivals** and **Traits**, one shown at a time.
+  Arrow keys, Home and End move between tabs. The last tab used is remembered
+  across reloads; a missing, blocked or unknown stored value opens Build.
+- **Chronicle** in a right-hand column, newest line at the top, scrolling
+  inside its own panel.
+- **Phone width** (under 700 px): the status bar stays on top, the tabs become
+  a bottom bar and the Chronicle becomes a fifth tab. Goals opens full width
+  right under the status bar. If the Chronicle tab was last used on a phone,
+  a wide screen shows Build beside the Chronicle column.

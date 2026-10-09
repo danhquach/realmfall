@@ -39,6 +39,7 @@ import {
 import type { Rng } from '../core/rng.ts';
 import { button, el, panel, setEnabled, setLabel, setText, setTraitText } from './dom.ts';
 import { mountGoalsPanel } from './goalsPanel.ts';
+import type { Layout } from './layout.ts';
 import { mountTraitPanel } from './traitPanel.ts';
 
 /** Applies a player action: the caller swaps in the returned realm and redraws. */
@@ -78,37 +79,34 @@ interface RivalRow {
 }
 
 /**
- * Builds the header, Goals, Stores, People, Buildings, Army, Rivals and Traits panels inside
- * `root` once, and returns the function that refreshes them from a realm.
+ * Builds the status bar (name, year, stores, people), the Goals dropdown and
+ * the Build (People, Buildings), Army, Rivals and Traits tabs inside `layout`
+ * once (docs/design.md §18), and returns the function that refreshes them from a realm.
  * Controls are created once and kept, so keyboard focus survives the per-frame
  * redraw. `battleRng` rolls the battles the player starts.
  */
-export function mountRealmPanels(
-  root: HTMLElement,
-  act: Act,
-  battleRng: Rng,
-): (realm: Realm) => void {
-  const header = el('header');
+export function mountRealmPanels(layout: Layout, act: Act, battleRng: Rng): (realm: Realm) => void {
   const title = el('h1');
   const subtitle = el('p', 'subtitle');
-  header.append(title, subtitle);
-
-  const stores = panel('Stores');
   const storeList = el('dl', 'stores');
-  stores.append(storeList);
+  storeList.setAttribute('aria-label', 'Stores');
   const storeRows = RESOURCES.map((k) => {
     const amount = el('span', 'amount');
     const rate = el('span', 'rate');
     const value = el('dd');
     value.append(amount, ' ', rate);
-    storeList.append(el('dt', undefined, k), value);
+    // A div may group each name with its value inside a dl.
+    const item = el('div');
+    item.append(el('dt', undefined, k), value);
+    storeList.append(item);
     return { k, amount, rate };
   });
+  const census = el('p', 'census');
+  layout.status.append(title, subtitle, storeList, census);
 
   const people = panel('People');
-  const census = el('p');
   const jobList = el('ul', 'rows');
-  people.append(census, jobList);
+  people.append(jobList);
   const jobRows = JOBS.map((job) => {
     const label = el('span', 'label');
     const less = button('−', () => act((r) => unassign(r, job)));
@@ -205,11 +203,11 @@ export function mountRealmPanels(
     return { li, label, info, scoutBtn, tributeBtn, attackBtn };
   };
 
-  const panels = el('div', 'panels');
-  panels.append(stores, people, buildings, army, rivals);
-  const renderTraits = mountTraitPanel(panels, act);
-  const renderGoals = mountGoalsPanel(panels);
-  root.append(header, panels);
+  layout.tabs.build.append(people, buildings);
+  layout.tabs.army.append(army);
+  layout.tabs.rivals.append(rivals);
+  const renderTraits = mountTraitPanel(layout.tabs.traits, act);
+  const renderGoals = mountGoalsPanel(layout.goals);
 
   return (realm) => {
     renderTraits(realm);
