@@ -2,22 +2,34 @@ import {
   BUILDINGS,
   JOBS,
   RESOURCES,
+  RIVAL_ACTIONS,
+  SOLDIER,
+  armyPower,
   assign,
+  attack,
   build,
   buildingCost,
   canAfford,
+  disband,
   housingCap,
   population,
   rates,
+  rivalView,
+  scout,
   storeCaps,
+  traitLabel,
+  train,
+  tribute,
   unassign,
   upgradeCost,
   upgradeStorehouse,
+  winChance,
   type Building,
   type Cost,
   type Job,
   type Realm,
 } from '../core/realm.ts';
+import type { Rng } from '../core/rng.ts';
 
 /** Applies a player action: the caller swaps in the returned realm and redraws. */
 export type Act = (change: (realm: Realm) => Realm) => void;
@@ -81,11 +93,36 @@ function setEnabled(b: HTMLButtonElement, enabled: boolean): void {
 }
 
 /**
- * Builds the header, Stores, People and Buildings panels inside `root` once,
- * and returns the function that refreshes them from a realm. Controls are
- * created once and kept, so keyboard focus survives the per-frame redraw.
+ * The Chronicle lines `after` added on top of `before`. Entries are shared, so
+ * the old last line is found by identity; this holds at the 200-line cap as
+ * long as one action writes fewer than 200 lines (it writes at most three).
  */
-export function mountRealmPanels(root: HTMLElement, act: Act): (realm: Realm) => void {
+function newLines(before: Realm, after: Realm): string[] {
+  const last = before.chronicle.at(-1);
+  const from = last ? after.chronicle.lastIndexOf(last) + 1 : 0;
+  return after.chronicle.slice(from).map((e) => e.text);
+}
+
+interface RivalRow {
+  li: HTMLLIElement;
+  label: HTMLSpanElement;
+  info: HTMLSpanElement;
+  scoutBtn: HTMLButtonElement;
+  tributeBtn: HTMLButtonElement;
+  attackBtn: HTMLButtonElement;
+}
+
+/**
+ * Builds the header, Stores, People, Buildings, Army and Rivals panels inside
+ * `root` once, and returns the function that refreshes them from a realm.
+ * Controls are created once and kept, so keyboard focus survives the per-frame
+ * redraw. `battleRng` rolls the battles the player starts.
+ */
+export function mountRealmPanels(
+  root: HTMLElement,
+  act: Act,
+  battleRng: Rng,
+): (realm: Realm) => void {
   const header = el('header');
   const title = el('h1');
   const subtitle = el('p', 'subtitle');
@@ -137,8 +174,63 @@ export function mountRealmPanels(root: HTMLElement, act: Act): (realm: Realm) =>
   storehouseLi.append(storehouseLabel, storehouseBtn);
   buildList.append(storehouseLi);
 
+  const army = panel('Army');
+  const armyLine = el('p');
+  const armyList = el('ul', 'rows');
+  army.append(armyLine, armyList);
+  const soldiersLabel = el('span', 'label');
+  const disbandBtn = button('−', () => act((r) => disband(r)));
+  disbandBtn.setAttribute('aria-label', 'Disband one spearman');
+  const trainBtn = button('+', () => act((r) => train(r)));
+  trainBtn.setAttribute('aria-label', `Train one spearman (${formatCost(SOLDIER.cost)})`);
+  const trainLi = el('li');
+  trainLi.append(soldiersLabel, el('span', 'controls'));
+  trainLi.lastElementChild!.append(disbandBtn, trainBtn);
+  armyList.append(trainLi);
+  army.append(el('p', 'note', `Each takes an idle peasant and ${formatCost(SOLDIER.cost)}.`));
+
+  const rivals = panel('Rivals');
+  const rivalList = el('ul', 'rivals');
+  // Battle, scouting and tribute results, announced as they happen.
+  const report = el('p', 'report');
+  report.setAttribute('aria-live', 'polite');
+  rivals.append(rivalList, report);
+  // Rows are keyed by rival name (names are unique), so when a conquered rival
+  // leaves the list the rows after it never start pointing at another rival.
+  const rivalRows = new Map<string, RivalRow>();
+
+  /** Runs a rival action and shows the Chronicle lines it wrote, dated. */
+  const rivalAct = (change: (realm: Realm) => Realm) =>
+    act((r) => {
+      const next = change(r);
+      const lines = newLines(r, next);
+      if (lines.length > 0) setText(report, `Year ${next.year}: ${lines.join(' ')}`);
+      return next;
+    });
+
+  /** The rival named `name` in `realm`, by index; -1 (a no-op for every action) once it's gone. */
+  const at = (realm: Realm, name: string) => realm.rivals.findIndex((r) => r.name === name);
+
+  const rivalRow = (name: string): RivalRow => {
+    const label = el('span', 'label');
+    const info = el('span', 'info');
+    const scoutText = `Scout (${RIVAL_ACTIONS.scoutGold} gold)`;
+    const scoutBtn = button(scoutText, () => rivalAct((r) => scout(r, at(r, name))));
+    // Accessible names start with the visible text, so voice control can use it.
+    scoutBtn.setAttribute('aria-label', `${scoutText} ${name}`);
+    const tributeText = `Tribute (${RIVAL_ACTIONS.tributeGold} gold)`;
+    const tributeBtn = button(tributeText, () => rivalAct((r) => tribute(r, at(r, name))));
+    tributeBtn.setAttribute('aria-label', `${tributeText} to ${name}`);
+    const attackBtn = button('Attack', () => rivalAct((r) => attack(r, at(r, name), battleRng)));
+    attackBtn.setAttribute('aria-label', `Attack ${name}`);
+    const li = el('li');
+    li.append(label, info, el('span', 'controls'));
+    li.lastElementChild!.append(scoutBtn, tributeBtn, attackBtn);
+    return { li, label, info, scoutBtn, tributeBtn, attackBtn };
+  };
+
   const panels = el('div', 'panels');
-  panels.append(stores, people, buildings);
+  panels.append(stores, people, buildings, army, rivals);
   root.append(header, panels);
 
   return (realm) => {
@@ -172,5 +264,44 @@ export function mountRealmPanels(root: HTMLElement, act: Act): (realm: Realm) =>
     setText(storehouseLabel, `Storehouse level ${realm.storehouse}`);
     setText(storehouseBtn, `Upgrade to ${realm.storehouse + 1} (${formatCost(next)})`);
     setEnabled(storehouseBtn, canAfford(realm, next));
+
+    const power = armyPower(realm);
+    setText(armyLine, `Army power ${Math.round(power)}`);
+    setText(soldiersLabel, `Spearmen ${realm.soldiers}`);
+    setEnabled(disbandBtn, realm.soldiers > 0);
+    setEnabled(trainBtn, realm.idle > 0 && canAfford(realm, SOLDIER.cost));
+
+    const names = new Set(realm.rivals.map((r) => r.name));
+    for (const [name, row] of rivalRows) {
+      if (!names.has(name)) {
+        row.li.remove();
+        rivalRows.delete(name);
+      }
+    }
+    const scoutGold = { gold: RIVAL_ACTIONS.scoutGold };
+    const tributeGold = { gold: RIVAL_ACTIONS.tributeGold };
+    realm.rivals.forEach((rival, i) => {
+      // The UI reads rivals only through rivalView, so unscouted stats stay hidden.
+      const v = rivalView(rival);
+      let row = rivalRows.get(v.name);
+      if (!row) {
+        row = rivalRow(v.name);
+        rivalRows.set(v.name, row);
+      }
+      // Moves a row only when it is out of place, so a focused button keeps focus.
+      if (rivalList.children[i] !== row.li)
+        rivalList.insertBefore(row.li, rivalList.children[i] ?? null);
+      setText(row.label, `${v.name} · ${v.hostile ? 'hostile' : 'at peace'}`);
+      row.label.classList.toggle('negative', v.hostile);
+      setText(
+        row.info,
+        v.scouted
+          ? `Power ${Math.round(v.power)} · ${traitLabel(v.trait)} · Win chance ${Math.round(winChance(power, v.power) * 100)}%`
+          : 'Power ? · Not scouted',
+      );
+      setEnabled(row.scoutBtn, !v.scouted && canAfford(realm, scoutGold));
+      setEnabled(row.tributeBtn, v.hostile && canAfford(realm, tributeGold));
+      setEnabled(row.attackBtn, realm.soldiers > 0);
+    });
   };
 }

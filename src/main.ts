@@ -1,5 +1,6 @@
 import { advance, parseSpeed } from './core/loop.ts';
 import { createRealm } from './core/realm.ts';
+import { createRng } from './core/rng.ts';
 import { mountRealmPanels } from './ui/realmPanels.ts';
 
 const root = document.getElementById('app');
@@ -7,6 +8,8 @@ if (!root) throw new Error('#app missing');
 
 // The run seed comes from the platform's random source; Math.random is banned.
 let realm = createRealm(crypto.getRandomValues(new Uint32Array(1))[0]!);
+// Battles the player starts roll on their own stream, seeded the same way.
+const battleRng = createRng(crypto.getRandomValues(new Uint32Array(1))[0]!);
 
 // Dev builds only: ?speed=1|5|20 runs game time faster for testing.
 const speed = import.meta.env.DEV
@@ -19,10 +22,14 @@ if (speed > 1) {
   root.append(note);
 }
 
-const render = mountRealmPanels(root, (change) => {
-  realm = change(realm);
-  render(realm);
-});
+const render = mountRealmPanels(
+  root,
+  (change) => {
+    realm = change(realm);
+    render(realm);
+  },
+  battleRng,
+);
 
 // Fixed-step loop: real time (scaled by speed) accumulates and the simulation
 // consumes it in whole STEP-sized ticks, whatever the frame rate.
