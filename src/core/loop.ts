@@ -1,4 +1,12 @@
-import { awayFrom, awaySummary, tick, type Away, type Realm } from './realm.ts';
+import {
+  awayFrom,
+  awaySummary,
+  isFallen,
+  markFallen,
+  tick,
+  type Away,
+  type Realm,
+} from './realm.ts';
 
 /** Fixed simulation step in game seconds. */
 export const STEP = 0.25;
@@ -26,7 +34,8 @@ export function parseSpeed(value: string | null): Speed {
  * Runs as many fixed steps as fit in `pending` game seconds and returns the new
  * realm with the remainder to carry into the next call. Every step is exactly
  * STEP long, so the result does not depend on how real time was sliced.
- * `away` replays the time as an absence (§10 Away time).
+ * `away` replays the time as an absence (§10 Away time). Once the realm has
+ * fallen (§4) the rest of the time is dropped.
  */
 export function advance(
   realm: Realm,
@@ -37,6 +46,8 @@ export function advance(
   while (left >= STEP) {
     realm = tick(realm, STEP, away);
     left -= STEP;
+    // A fallen realm stands still (§4), so the time left is dropped, not ticked through.
+    if (isFallen(realm)) return { realm, pending: 0 };
   }
   return { realm, pending: left };
 }
@@ -54,8 +65,12 @@ export const AWAY_SUMMARY_MIN = 60;
  * MAX_CATCHUP. From a minute up it is time away: what needs a decision waits
  * for the player (see tick()), and one Chronicle line sums it up. A negative
  * or non-finite `away` (a clock set back, a bad timestamp) replays nothing.
+ * A realm that falls while away stops there (§4); the "Away" line covers the
+ * time up to its fall.
  */
 export function catchUp(realm: Realm, away: number): Realm {
+  // A realm that had already fallen replays nothing and gets no "Away" line (§4).
+  if (isFallen(realm)) return markFallen(realm);
   const seconds = Number.isFinite(away) ? away : 0;
   if (seconds < AWAY_SUMMARY_MIN) return advance(realm, seconds).realm;
   return summarise(realm, advance(realm, seconds, awayFrom(realm)).realm);
@@ -80,6 +95,8 @@ export function play(
   real: number,
   speed = 1,
 ): { realm: Realm; pending: number } {
+  // A fallen realm stands still (§4): no time, no "Away" line.
+  if (isFallen(realm)) return { realm: markFallen(realm), pending: 0 };
   // A non-finite gap replays nothing, as in catchUp().
   const elapsed = Number.isFinite(real) ? real * speed : 0;
   if (!(real >= AWAY_SUMMARY_MIN) || elapsed === 0) return advance(realm, pending + elapsed);

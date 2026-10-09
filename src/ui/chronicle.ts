@@ -15,6 +15,7 @@ const KIND_NAMES: Record<ChronicleKind, string> = {
   buildings: 'Buildings',
   traits: 'Traits',
   away: 'Away',
+  realm: 'Realm',
 };
 
 function line(entry: ChronicleEntry): HTMLLIElement {

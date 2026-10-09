@@ -15,6 +15,10 @@ const NARROW = '(max-width: 699px)';
 export interface Layout {
   /** The status bar's content, left of the Goals button. */
   status: HTMLElement;
+  /** The status bar's buttons at its right end, the Goals button last. */
+  tools: HTMLElement;
+  /** Notices under the status bar, above the workspace; empty most of the time. */
+  notices: HTMLElement;
   /** Where each tab's panels go; the Chronicle's is the right column on wide screens. */
   tabs: Record<Tab, HTMLElement>;
   /** The Goals dropdown's content. */
@@ -23,9 +27,9 @@ export interface Layout {
 
 /**
  * Builds the one-screen layout (docs/design.md §18) inside `root`: a status
- * bar with the Goals button, a tabbed workspace, and the Chronicle beside it
- * (or as a tab at phone width). The last tab used is remembered; Goals always
- * starts closed.
+ * bar with the Goals button, a row for notices, a tabbed workspace, and the
+ * Chronicle beside it (or as a tab at phone width). The last tab used is
+ * remembered; Goals always starts closed.
  */
 export function mountLayout(root: HTMLElement): Layout {
   root.classList.add('app');
@@ -36,7 +40,10 @@ export function mountLayout(root: HTMLElement): Layout {
   goalsBtn.id = 'goals-button';
   goalsBtn.setAttribute('aria-expanded', 'false');
   goalsBtn.setAttribute('aria-controls', 'goals-pop');
-  header.append(status, goalsBtn);
+  const tools = el('div', 'status-tools');
+  tools.append(goalsBtn);
+  header.append(status, tools);
+  const notices = el('div', 'notices');
 
   const workspace = el('div', 'workspace');
   const tablist = el('div', 'tabs');
@@ -75,8 +82,9 @@ export function mountLayout(root: HTMLElement): Layout {
   goals.hidden = true;
 
   workspace.append(tablist, ...TABS.map((t) => tabs[t]));
-  // Right after the status bar, so Tab goes from the Goals button straight into it.
-  root.append(header, goals, workspace);
+  // Right after the status bar, so Tab goes from the Goals button straight into
+  // it; then any notice, then the workspace.
+  root.append(header, goals, notices, workspace);
 
   const narrow = matchMedia(NARROW);
   let selected = loadTab();
@@ -179,5 +187,5 @@ export function mountLayout(root: HTMLElement): Layout {
     if (!goals.hidden && !goals.contains(target) && !goalsBtn.contains(target)) setOpen(false);
   });
 
-  return { status, tabs, goals };
+  return { status, tools, notices, tabs, goals };
 }
