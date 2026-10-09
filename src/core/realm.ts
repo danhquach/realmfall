@@ -1,4 +1,4 @@
-import { chance, createRng, pick, type Rng } from './rng.ts';
+import { chance, createRng, int, pick, type Rng } from './rng.ts';
 
 /** The four stores (docs/design.md §3). */
 export const RESOURCES = ['food', 'wood', 'iron', 'gold'] as const;
@@ -420,7 +420,7 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
     soldiers: realm.soldiers - lost,
     idle: realm.idle + Math.floor(rival.power / BATTLE.annexPeoplePer),
     annexedHousing: realm.annexedHousing + BATTLE.annexHousing,
-    stores: { ...realm.stores, gold: addGold(realm, rival.power) },
+    stores: { ...realm.stores, gold: addStore(realm, 'gold', rival.power) },
     rivals: [...rest, createRival(rng, strongest * BATTLE.nextRivalScale, ring, taken)],
   };
   return gainTrait(annexed, rival.trait);
@@ -469,10 +469,80 @@ export function raid(realm: Realm, rng: Rng): Realm {
   return chronicle({ ...realm, stores }, text);
 }
 
-/** Gold after adding `amount`, stopped at the gold cap but never lowering gold already over it. */
-function addGold(realm: Realm, amount: number): number {
-  const { gold } = realm.stores;
-  return Math.max(gold, Math.min(storeCaps(realm).gold, gold + amount));
+/** Store `k` after adding `amount`, stopped at its cap but never lowering a store already over it. */
+function addStore(realm: Realm, k: Resource, amount: number): number {
+  const have = realm.stores[k];
+  return Math.max(have, Math.min(storeCaps(realm)[k], have + amount));
+}
+
+/** Event timing and amounts (docs/design.md §11). */
+export const EVENT = {
+  every: 25,
+  harvestBase: 50,
+  harvestPerPerson: 3,
+  plagueDeaths: 2,
+  plagueMinPopulation: 7,
+  envoyGold: 40,
+  veinIron: 15,
+} as const;
+
+export const EVENTS = ['harvest', 'plague', 'envoy', 'vein', 'changeOfHeart'] as const;
+export type RandomEvent = (typeof EVENTS)[number];
+
+/**
+ * The rng for event number `n` (the one at n × 25 s), from its own stream
+ * derived from the run's seed, so offline catch-up replays the same events.
+ */
+export function eventRng(seed: number, n: number): Rng {
+  return createRng((seed ^ 0x45564e54 ^ Math.imul(n, 0x9e3779b9)) >>> 0);
+}
+
+/** The events that can happen now: Plague needs population > 6, Change of heart a rival (§11). */
+export function possibleEvents(realm: Realm): RandomEvent[] {
+  return EVENTS.filter((e) => {
+    if (e === 'plague') return population(realm) >= EVENT.plagueMinPopulation;
+    if (e === 'changeOfHeart') return realm.rivals.length > 0;
+    return true;
+  });
+}
+
+/** Adds `amount` to store `k` up to its cap and writes what was actually gained. */
+function windfall(realm: Realm, k: Resource, amount: number, title: string): Realm {
+  const value = addStore(realm, k, amount);
+  const gained = Math.floor(value - realm.stores[k]);
+  const next = { ...realm, stores: { ...realm.stores, [k]: value } };
+  return chronicle(next, `${title}: +${gained} ${k}.`);
+}
+
+/** Applies `event` (§11). Gains past a store's cap are lost. */
+export function applyEvent(realm: Realm, event: RandomEvent, rng: Rng): Realm {
+  switch (event) {
+    case 'harvest': {
+      const food = EVENT.harvestBase + EVENT.harvestPerPerson * population(realm);
+      return windfall(realm, 'food', food, 'Bountiful harvest');
+    }
+    case 'plague': {
+      let next = realm;
+      for (let i = 0; i < EVENT.plagueDeaths; i++) next = loseOne(next);
+      return chronicle(next, `Plague: ${EVENT.plagueDeaths} people died.`);
+    }
+    case 'envoy':
+      return windfall(realm, 'gold', EVENT.envoyGold, "Envoy's gifts");
+    case 'vein':
+      return windfall(realm, 'iron', EVENT.veinIron, 'Rich vein');
+    case 'changeOfHeart': {
+      const index = int(rng, 0, realm.rivals.length - 1);
+      const rival = realm.rivals[index]!;
+      const next = updateRival(realm, index, (r) => ({ ...r, hostile: !r.hostile }));
+      const now = rival.hostile ? 'is now at peace' : 'turned hostile';
+      return chronicle(next, `Change of heart: ${rival.name} ${now}.`);
+    }
+  }
+}
+
+/** One random event (§11), each possible one equally likely, written to the Chronicle. */
+export function randomEvent(realm: Realm, rng: Rng): Realm {
+  return applyEvent(realm, pick(rng, possibleEvents(realm)), rng);
 }
 
 /** A trait's name with its tier, so colour is never the only cue (§9). */
@@ -481,7 +551,13 @@ export function traitLabel(trait: Trait): string {
   return `${name} (${TIER_INFO[tier].name})`;
 }
 
-/** Adds a Chronicle line dated to the current year. */
+/**
+ * Adds a Chronicle line dated to the current year.
+ *
+ * TODO(#17 Chronicle): keep only the latest 200 entries (§12) by dropping the
+ * oldest here. Events (#16) add a line every 25 s, so the list grows unbounded
+ * until then. Not yet shown in the UI either.
+ */
 function chronicle(realm: Realm, text: string): Realm {
   return { ...realm, chronicle: [...realm.chronicle, { year: realm.year, text }] };
 }
@@ -553,7 +629,7 @@ export function upgradeTrait(realm: Realm, trait: Trait): Realm {
 export function sellDuplicate(realm: Realm, trait: Trait): Realm {
   const owned = realm.traits[trait];
   if (!owned || owned.duplicates === 0) return realm;
-  const gold = addGold(realm, TIER_INFO[TRAIT_INFO[trait].tier].sellGold);
+  const gold = addStore(realm, 'gold', TIER_INFO[TRAIT_INFO[trait].tier].sellGold);
   const paid = gold - realm.stores.gold;
   const next = setOwned({ ...realm, stores: { ...realm.stores, gold } }, trait, {
     ...owned,
@@ -843,20 +919,45 @@ function loseOne(realm: Realm): Realm {
  * Raids (§7): raid number n lands at n × 45 s of game time, rolled on
  * raidRng(seed, n). A step that crosses a raid is split there, so a big step
  * (offline catch-up) refills the stores between raids just as live play does.
+ *
+ * Events (§11): event number n lands at n × 25 s, rolled on eventRng(seed, n),
+ * and splits the step the same way. When a raid and an event share a moment,
+ * the raid comes first.
  */
 export function tick(realm: Realm, dt: number): Realm {
   let next = realm;
   let left = dt;
+  const until = (every: number) => (Math.floor(next.time / every) + 1) * every - next.time;
   for (;;) {
-    const toRaid = (Math.floor(next.time / RAID.every) + 1) * RAID.every - next.time;
-    // `!(>)` also ends on NaN; toRaid ≤ 0 only at float limits, where no split can help.
-    if (!(left > toRaid) || !(toRaid > 0)) return step(next, left);
-    next = step(next, toRaid);
-    left -= toRaid;
+    const toNext = Math.min(until(RAID.every), until(EVENT.every));
+    // `!(>)` also ends on NaN; toNext ≤ 0 only at float limits, where no split can help.
+    if (!(left > toNext) || !(toNext > 0)) return step(next, left);
+    next = step(next, toNext);
+    left -= toNext;
   }
 }
 
-/** One stretch of tick() that ends on or before the next raid. */
+/** A raid or event landing at game time `at`. */
+interface Happening {
+  at: number;
+  run: (realm: Realm) => Realm;
+}
+
+/** Every raid and event in (from, to], in time order; a raid before an event at the same moment. */
+function happenings(seed: number, from: number, to: number): Happening[] {
+  const list: Happening[] = [];
+  const add = (every: number, run: (n: number) => Happening['run']) => {
+    for (let n = Math.floor(from / every) + 1; n <= Math.floor(to / every); n++) {
+      list.push({ at: n * every, run: run(n) });
+    }
+  };
+  add(RAID.every, (n) => (r) => raid(r, raidRng(seed, n)));
+  add(EVENT.every, (n) => (r) => randomEvent(r, eventRng(seed, n)));
+  // Array.sort is stable, so raids stay ahead of events at the same moment.
+  return list.sort((a, b) => a.at - b.at);
+}
+
+/** One stretch of tick() that ends on or before the next raid or event. */
 function step(realm: Realm, dt: number): Realm {
   const r = rates(realm);
   const caps = storeCaps(realm);
@@ -893,14 +994,13 @@ function step(realm: Realm, dt: number): Realm {
   }
 
   next = { ...next, hunger, soldiers, desertion };
-  // Years and raids run in time order, so a raid meets the rivals and year of its moment.
+  // Years, raids and events run in time order, so each meets the rivals and year of its moment.
   const toYear = (year: number) => {
     while (next.year < year) next = { ...growRivals(next), year: next.year + 1 };
   };
-  const raids = Math.floor(next.time / RAID.every);
-  for (let n = Math.floor(realm.time / RAID.every) + 1; n <= raids; n++) {
-    toYear(1 + Math.floor((n * RAID.every) / YEAR_SECONDS));
-    next = raid(next, raidRng(next.seed, n));
+  for (const h of happenings(next.seed, realm.time, next.time)) {
+    toYear(1 + Math.floor(h.at / YEAR_SECONDS));
+    next = h.run(next);
   }
   toYear(1 + Math.floor(next.time / YEAR_SECONDS));
   return next;
