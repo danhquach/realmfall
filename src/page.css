@@ -5,6 +5,12 @@
   --muted: #6b645b;
   --line: #d8d1c4;
   --negative: #b3261e;
+  /* Trait tier colours (docs/design.md §9), each 4.5:1 or more on --bg. */
+  --tier-common: #5f5a52;
+  --tier-fine: #276b2b;
+  --tier-noble: #1f5fa8;
+  --tier-royal: #7b3fa0;
+  --tier-mythic: #9a5b06;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -13,7 +19,16 @@
     --muted: #a39c90;
     --line: #3a3733;
     --negative: #ff8a80;
+    --tier-common: #c9c2b6;
+    --tier-fine: #81c784;
+    --tier-noble: #7fb3f0;
+    --tier-royal: #c39be0;
+    --tier-mythic: #f0b44c;
   }
+}
+/* Elements given `display` below would otherwise ignore the hidden attribute. */
+[hidden] {
+  display: none !important;
 }
 body {
   margin: 0;
@@ -181,4 +196,45 @@ button:focus-visible {
 .chronicle .filters button[aria-pressed='false'] {
   color: var(--muted);
   border-style: dashed;
+}
+h3 {
+  margin: 12px 0 4px;
+  font-size: 0.9rem;
+}
+.tier-common {
+  color: var(--tier-common);
+}
+.tier-fine {
+  color: var(--tier-fine);
+}
+.tier-noble {
+  color: var(--tier-noble);
+}
+.tier-royal {
+  color: var(--tier-royal);
+}
+.tier-mythic {
+  color: var(--tier-mythic);
+}
+.traits .slots {
+  margin: 0;
+  padding-left: 1.5em;
+}
+.traits .rows li {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  border-top: 1px solid var(--line);
+}
+.traits .rows li:first-child {
+  border-top: 0;
+}
+.traits .owned .info {
+  color: var(--muted);
+}
+.traits {
+  grid-column: 1 / -1;
+}
+.traits .rows .controls {
+  flex-wrap: wrap;
+  margin-left: auto;
 }

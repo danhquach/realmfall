@@ -30,6 +30,8 @@ import {
   type Realm,
 } from '../core/realm.ts';
 import type { Rng } from '../core/rng.ts';
+import { button, el, panel, setEnabled, setText, setTraitText } from './dom.ts';
+import { mountTraitPanel } from './traitPanel.ts';
 
 /** Applies a player action: the caller swaps in the returned realm and redraws. */
 export type Act = (change: (realm: Realm) => Realm) => void;
@@ -50,46 +52,6 @@ const BUILDING_LABELS: Record<Building, string> = {
 function formatCost(cost: Cost): string {
   const parts = RESOURCES.filter((k) => cost[k] !== undefined).map((k) => `${cost[k]} ${k}`);
   return parts.length > 0 ? parts.join(', ') : 'free';
-}
-
-/** Writes only on change, so the per-frame redraw doesn't churn the DOM. */
-function setText(el: HTMLElement, text: string): void {
-  if (el.textContent !== text) el.textContent = text;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function panel(title: string): HTMLElement {
-  const section = el('section', 'panel');
-  section.append(el('h2', undefined, title));
-  return section;
-}
-
-/**
- * A button greyed out with aria-disabled rather than `disabled`, so it keeps
- * keyboard focus when a press uses up the last idle peasant or the last of a cost.
- */
-function button(label: string, onClick: () => void): HTMLButtonElement {
-  const b = el('button', undefined, label);
-  b.type = 'button';
-  b.addEventListener('click', () => {
-    if (b.getAttribute('aria-disabled') !== 'true') onClick();
-  });
-  return b;
-}
-
-function setEnabled(b: HTMLButtonElement, enabled: boolean): void {
-  const value = String(!enabled);
-  if (b.getAttribute('aria-disabled') !== value) b.setAttribute('aria-disabled', value);
 }
 
 /**
@@ -113,7 +75,7 @@ interface RivalRow {
 }
 
 /**
- * Builds the header, Stores, People, Buildings, Army and Rivals panels inside
+ * Builds the header, Stores, People, Buildings, Army, Rivals and Traits panels inside
  * `root` once, and returns the function that refreshes them from a realm.
  * Controls are created once and kept, so keyboard focus survives the per-frame
  * redraw. `battleRng` rolls the battles the player starts.
@@ -231,9 +193,11 @@ export function mountRealmPanels(
 
   const panels = el('div', 'panels');
   panels.append(stores, people, buildings, army, rivals);
+  const renderTraits = mountTraitPanel(panels, act);
   root.append(header, panels);
 
   return (realm) => {
+    renderTraits(realm);
     setText(title, realm.name);
     setText(subtitle, `Year ${realm.year}`);
 
@@ -293,7 +257,7 @@ export function mountRealmPanels(
         rivalList.insertBefore(row.li, rivalList.children[i] ?? null);
       setText(row.label, `${v.name} · ${v.hostile ? 'hostile' : 'at peace'}`);
       row.label.classList.toggle('negative', v.hostile);
-      setText(
+      setTraitText(
         row.info,
         v.scouted
           ? `Power ${Math.round(v.power)} · ${traitLabel(v.trait)} · Win chance ${Math.round(winChance(power, v.power) * 100)}%`

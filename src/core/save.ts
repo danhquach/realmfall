@@ -1,22 +1,35 @@
 import {
   BUILDINGS,
+  CHALLENGE,
+  CHALLENGE_INFO,
+  CHALLENGES,
   RIVAL,
   CHRONICLE_KINDS,
   CHRONICLE_MAX,
   JOBS,
+  MILESTONES,
+  OFFER_CHOICES,
+  OFFER_MAX,
+  OFFER_SOURCES,
   RESOURCES,
+  TIER_INFO,
+  TRADER,
   TRAITS,
+  TRAIT_INFO,
   TRAIT_RULES,
   YEAR_SECONDS,
+  type Challenge,
   type ChronicleEntry,
   type OwnedTrait,
   type Realm,
   type Rival,
   type Trait,
+  type TraderItem,
+  type TraitOffer,
 } from './realm.ts';
 
 /** Bump when the saved shape changes; a save of any other version starts a new game. */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 /**
  * Bounds that keep a hand-edited save from freezing the page: the simulation
@@ -152,6 +165,30 @@ function traits(v: unknown): Partial<Record<Trait, OwnedTrait>> {
   return out;
 }
 
+function traitOffer(v: unknown): TraitOffer {
+  const o = obj(v);
+  const source = oneOf(own(o, 'source'), OFFER_SOURCES);
+  const choices = arr(own(o, 'choices'), OFFER_CHOICES[source]).map((t) => oneOf(t, TRAITS));
+  if (choices.length !== OFFER_CHOICES[source]) fail();
+  return { source, choices };
+}
+
+/** The active challenge, whose deadline is no further off than a fresh one's. */
+function challenge(v: unknown, year: number): Challenge | null {
+  if (v === null) return null;
+  const o = obj(v);
+  const kind = oneOf(own(o, 'kind'), CHALLENGES);
+  return { kind, deadline: int(own(o, 'deadline'), 1, year + CHALLENGE_INFO[kind].years) };
+}
+
+/** A trader item, priced within its trait's tier range. */
+function traderItem(v: unknown): TraderItem {
+  const o = obj(v);
+  const trait = oneOf(own(o, 'trait'), TRAITS);
+  const [min, max] = TIER_INFO[TRAIT_INFO[trait].tier].price;
+  return { trait, price: int(own(o, 'price'), min, max) };
+}
+
 function entry(v: unknown, year: number): ChronicleEntry {
   const o = obj(v);
   return {
@@ -181,6 +218,8 @@ function realm(v: unknown): Realm {
   if (slotReadyYear.length !== TRAIT_RULES.slots) fail();
   const rivals = arr(own(o, 'rivals'), SAVE_LIMITS.rivals).map(rival);
   if (rivals.length === 0) fail();
+  const milestones = arr(own(o, 'milestones'), MILESTONES.length).map((m) => oneOf(m, MILESTONES));
+  if (new Set(milestones).size !== milestones.length) fail();
   return {
     seed: int(own(o, 'seed'), 0, 0xffffffff),
     name: text(own(o, 'name'), NAME, SAVE_LIMITS.nameChars),
@@ -200,6 +239,14 @@ function realm(v: unknown): Realm {
     traits: owned,
     slots,
     slotReadyYear,
+    battlesWon: count(own(o, 'battlesWon')),
+    raidsRepelled: count(own(o, 'raidsRepelled')),
+    milestones,
+    offers: arr(own(o, 'offers'), OFFER_MAX).map(traitOffer),
+    challenge: challenge(own(o, 'challenge'), year),
+    challengeYear: int(own(o, 'challengeYear'), 1, year + CHALLENGE.every),
+    trader: arr(own(o, 'trader'), TRADER.stock).map(traderItem),
+    traderYear: int(own(o, 'traderYear'), 0, year),
     chronicle: arr(own(o, 'chronicle'), CHRONICLE_MAX).map((e) => entry(e, year)),
   };
 }

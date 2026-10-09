@@ -398,7 +398,21 @@ Slots and the level cap bound the total: at most three traits, each at most
   conquests give better traits.
 - Trader prices count against the gold cap (§3): a Mythic trait needs the gold
   cap of Storehouse level 3.
-- Every gain, slot, swap, upgrade and sale is written to the Chronicle.
+- **Milestones** are checked as the realm changes; "hold 5 sites" joins them
+  once sites exist (§8). Several reached at once each pay out.
+- **Challenges:** the first can come in year 16, and each later one 15 years
+  after the last ended. Only a challenge that can be met is offered: stockpile
+  500 food in 3 years needs a food cap of 500 or more and less than 500 in store, and repel the next raid
+  (6 years) needs a hostile rival. Claim a site in 4 years joins them once
+  sites exist (§8). The raid challenge ends with the next raid on the capital:
+  repelled meets it, anything else fails it.
+- **Offers** wait until the player picks. At most 10 are kept; past that the
+  oldest is dropped. The choices of one offer are rolled separately, so two
+  can be the same trait.
+- **Trader:** opens with fresh stock as soon as the first Market stands, then
+  restocks 10 years after each restock. A restock replaces unsold stock.
+- Every gain, offer, pick, purchase, challenge result, slot, swap, upgrade and
+  sale is written to the Chronicle.
 
 ## 10. Time
 

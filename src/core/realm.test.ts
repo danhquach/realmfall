@@ -63,6 +63,19 @@ import {
   upgradeTrait,
   winChance,
   YEAR_SECONDS,
+  CHALLENGE,
+  CHALLENGE_INFO,
+  MILESTONES,
+  MILESTONE_INFO,
+  OFFER_CHOICES,
+  OFFER_MAX,
+  TIERS,
+  TRADER,
+  buyTrait,
+  pickOffer,
+  possibleChallenges,
+  rollTrait,
+  traitRng,
   type Building,
   type Realm,
   type Trait,
@@ -1686,7 +1699,7 @@ describe('raids (design §7)', () => {
     for (let i = 0; i < 10; i++) split = tick(split, RAID.every);
     const big = tick(full, RAID.every * 10);
     expect(big).toEqual(split);
-    expect(big.chronicle.filter((c) => /raid/.test(c.text))).toHaveLength(10);
+    expect(big.chronicle.filter((c) => c.kind === 'raids')).toHaveLength(10);
   });
 
   it('does nothing while no rival is hostile', () => {
@@ -1694,9 +1707,9 @@ describe('raids (design §7)', () => {
     const peace = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: false })) };
     expect(raid(peace, rolls(0, 0.999999))).toBe(peace);
     // With no rival at all, no Change of heart (§11) can make one hostile: events land, raids never.
-    const lines = tick({ ...peace, rivals: [] }, RAID.every * 3).chronicle.map((c) => c.text);
-    expect(lines).toHaveLength(5);
-    expect(lines.filter((t) => /raid/i.test(t))).toEqual([]);
+    const kinds = tick({ ...peace, rivals: [] }, RAID.every * 3).chronicle.map((c) => c.kind);
+    expect(kinds.filter((k) => k === 'events')).toHaveLength(5);
+    expect(kinds.filter((k) => k === 'raids')).toEqual([]);
   });
 
   it('picks only among hostile rivals', () => {
@@ -1738,7 +1751,7 @@ describe('raids (design §7)', () => {
       const base = createRealm(seed);
       let r = { ...base, soldiers: 3, rivals: base.rivals.map((v) => ({ ...v, hostile: true })) };
       for (let t = 0; t < RAID.every * 10; t += 0.25) r = tick(r, 0.25);
-      return r.chronicle.filter((c) => /raid/.test(c.text));
+      return r.chronicle.filter((c) => c.kind === 'raids');
     };
     expect(run(42)).toHaveLength(10);
     expect(run(42)).toEqual(run(42));
@@ -2050,7 +2063,13 @@ describe('Chronicle (design §12)', () => {
     const next = tick(hostile, RAID.every * 20);
     for (const c of next.chronicle) {
       expect(c.kind).toBe(
-        /raid/.test(c.text) ? 'raids' : /Change of heart/.test(c.text) ? 'rivals' : 'events',
+        /raided|Repelled a raid/.test(c.text)
+          ? 'raids'
+          : /Change of heart/.test(c.text)
+            ? 'rivals'
+            : /Challenge|trait/.test(c.text)
+              ? 'traits'
+              : 'events',
       );
     }
   });
@@ -2093,5 +2112,451 @@ describe('chronicleView (design §12)', () => {
     // line 0 (events) fell off the oldest end; the oldest buildings line left is line 4.
     expect(view.at(-1)!.text).toBe('line 4');
     expect(view).toHaveLength(1 + old.slice(1).filter((e) => e.kind === 'buildings').length);
+  });
+});
+
+describe('trait sources (design §9)', () => {
+  /** A realm with every rival at peace and no market: no challenge or trader unless a test adds one. */
+  const calm = (seed = 9): Realm => atPeace(createRealm(seed));
+  /** One 0.25 s tick, which runs the trait sources at its end. */
+  const nudge = (realm: Realm): Realm => tick(realm, 0.25);
+  /** The realm at the start of `year`. */
+  const inYear = (realm: Realm, year: number): Realm => ({
+    ...realm,
+    year,
+    time: (year - 1) * YEAR_SECONDS,
+  });
+  /** Chronicle lines `after` added on top of `before`. */
+  const added = (before: Realm, after: Realm) =>
+    after.chronicle.slice(before.chronicle.length).map((c) => c.text);
+
+  describe('rolled traits', () => {
+    it('lands on each tier at its roll odds over a seeded sample', () => {
+      const rng = createRng(2026);
+      const n = 200_000;
+      const counts = new Map<Trait, number>();
+      for (let i = 0; i < n; i++) {
+        const t = rollTrait(rng);
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+      for (const tier of TIERS) {
+        const inTier = TRAITS.filter((t) => TRAIT_INFO[t].tier === tier);
+        const share = inTier.reduce((sum, t) => sum + (counts.get(t) ?? 0), 0) / n;
+        expect(share).toBeCloseTo(TIER_INFO[tier].odds, 2);
+        // Within a tier, each trait is equally likely.
+        for (const t of inTier) {
+          expect((counts.get(t) ?? 0) / n).toBeCloseTo(TIER_INFO[tier].odds / inTier.length, 2);
+        }
+      }
+    });
+
+    it('rolls the same traits from the same seed', () => {
+      const roll = (seed: number) => {
+        const rng = createRng(seed);
+        return Array.from({ length: 50 }, () => rollTrait(rng));
+      };
+      expect(roll(7)).toEqual(roll(7));
+      expect(roll(7)).not.toEqual(roll(8));
+    });
+
+    it('takes the last tier on a roll past the summed odds', () => {
+      const rolls = [0.9999999999999999, 0];
+      expect(rollTrait(() => rolls.shift()!)).toBe('goldenAge');
+    });
+
+    it('gives each source its own stream', () => {
+      const first = (s: Parameters<typeof traitRng>[1], seed = 1, n = 1) => traitRng(seed, s, n)();
+      const streams = (['milestone', 'challenge', 'reward', 'trader'] as const).map((s) =>
+        first(s),
+      );
+      expect(new Set(streams).size).toBe(4);
+      expect(first('trader', 1, 1)).not.toBe(first('trader', 1, 2));
+      expect(first('trader', 1, 1)).not.toBe(first('trader', 2, 1));
+    });
+
+    it('sets each tier odds and price range as in the tier table', () => {
+      expect(TIERS.map((t) => TIER_INFO[t].odds)).toEqual([0.45, 0.3, 0.15, 0.07, 0.03]);
+      expect(TIERS.map((t) => TIER_INFO[t].price)).toEqual([
+        [150, 250],
+        [300, 500],
+        [600, 1000],
+        [1200, 1800],
+        [2500, 4000],
+      ]);
+      // Buying to resell always loses gold.
+      for (const t of TIERS) expect(TIER_INFO[t].sellGold).toBeLessThan(TIER_INFO[t].price[0]);
+    });
+  });
+
+  describe('milestones', () => {
+    const reach: Record<(typeof MILESTONES)[number], (r: Realm) => Realm> = {
+      people: (r) => ({ ...r, idle: 50 - workers(r), annexedHousing: 100 }),
+      battles: (r) => ({ ...r, battlesWon: 10 }),
+      storehouse: (r) => ({ ...r, storehouse: 3 }),
+      raids: (r) => ({ ...r, raidsRepelled: 5 }),
+    };
+    const workers = (r: Realm) => r.jobs.farmer + r.jobs.woodcutter + r.jobs.miner + r.soldiers;
+
+    it.each(MILESTONES)('%s pays out exactly once, as 1 of 3 rolled traits', (m) => {
+      const before = reach[m](calm());
+      expect(MILESTONE_INFO[m].reached(before)).toBe(true);
+      const once = nudge(before);
+      expect(once.milestones).toEqual([m]);
+      expect(once.offers).toHaveLength(1);
+      expect(once.offers[0]!.source).toBe('milestone');
+      expect(once.offers[0]!.choices).toHaveLength(OFFER_CHOICES.milestone);
+      // The choices are rolled on the milestone's own stream.
+      const rng = traitRng(before.seed, 'milestone', MILESTONES.indexOf(m));
+      expect(once.offers[0]!.choices).toEqual([rollTrait(rng), rollTrait(rng), rollTrait(rng)]);
+      const line = once.chronicle.find((c) => c.text.startsWith('Milestone reached'))!;
+      expect(line.kind).toBe('traits');
+      expect(line.text).toContain(MILESTONE_INFO[m].goal);
+      // Still reached later, never paid again.
+      const later = tick(once, YEAR_SECONDS * 3);
+      expect(later.milestones).toEqual([m]);
+      expect(later.offers.filter((o) => o.source === 'milestone')).toHaveLength(1);
+    });
+
+    it('is not paid before its goal is reached', () => {
+      const realm = calm();
+      const short = {
+        ...realm,
+        storehouse: 2,
+        battlesWon: 9,
+        raidsRepelled: 4,
+      };
+      const next = nudge(short);
+      expect(next.milestones).toEqual([]);
+      expect(next.offers).toEqual([]);
+    });
+
+    it('counts battles won, not battles lost', () => {
+      const realm = { ...calm(), soldiers: 10 };
+      expect(attack(realm, 0, () => 0).battlesWon).toBe(1);
+      expect(attack(realm, 0, () => 0.999999).battlesWon).toBe(0);
+    });
+
+    it('counts raids repelled, not raids lost', () => {
+      const realm = createRealm(3);
+      const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
+      expect(raid({ ...hostile, soldiers: 1000 }, () => 0).raidsRepelled).toBe(1);
+      expect(raid({ ...hostile, soldiers: 0 }, () => 0).raidsRepelled).toBe(0);
+    });
+
+    it('pays every milestone reached in the same tick', () => {
+      let realm = calm();
+      for (const m of MILESTONES) realm = reach[m](realm);
+      const next = nudge(realm);
+      expect(next.milestones).toEqual([...MILESTONES]);
+      expect(next.offers).toHaveLength(MILESTONES.length);
+    });
+  });
+
+  describe('offers', () => {
+    const withOffer = (choices: Trait[], source: 'milestone' | 'challenge' = 'milestone') => ({
+      ...calm(),
+      offers: [{ source, choices }],
+    });
+
+    it('picking a new trait gains it at level 1 and closes the offer', () => {
+      const realm = withOffer(['timberClans', 'goldenAge', 'horseLords']);
+      const next = pickOffer(realm, 0, 1);
+      expect(next.traits.goldenAge).toEqual({ level: 1, duplicates: 0 });
+      expect(next.offers).toEqual([]);
+      expect(added(realm, next)).toEqual([
+        `Picked ${traitLabel('goldenAge')} from a milestone offer.`,
+        `Gained the trait ${traitLabel('goldenAge')}.`,
+      ]);
+      expect(next.chronicle.at(-2)!.kind).toBe('traits');
+    });
+
+    it('picking an owned trait gives a duplicate', () => {
+      const realm = gainTrait(withOffer(['timberClans', 'goldenAge'], 'challenge'), 'timberClans');
+      const next = pickOffer(realm, 0, 0);
+      expect(next.traits.timberClans).toEqual({ level: 1, duplicates: 1 });
+      expect(added(realm, next)[1]).toBe(`Gained a duplicate of ${traitLabel('timberClans')}.`);
+    });
+
+    it('picks from the offer asked for and leaves the others', () => {
+      const realm = {
+        ...calm(),
+        offers: [
+          { source: 'milestone' as const, choices: ['timberClans', 'goldenAge', 'horseLords'] },
+          { source: 'challenge' as const, choices: ['warriorCreed', 'fertileValleys'] },
+        ] as Realm['offers'],
+      };
+      const next = pickOffer(realm, 1, 0);
+      expect(next.traits).toEqual({ warriorCreed: { level: 1, duplicates: 0 } });
+      expect(next.offers).toEqual([realm.offers[0]]);
+    });
+
+    it.each([
+      [-1, 0],
+      [1, 0],
+      [0, 3],
+      [0, -1],
+      [0.5, 0],
+      [0, 0.5],
+      [NaN, 0],
+      [0, Infinity],
+    ])('ignores offer %s, choice %s', (index, choice) => {
+      const realm = withOffer(['timberClans', 'goldenAge', 'horseLords']);
+      expect(pickOffer(realm, index, choice)).toBe(realm);
+    });
+
+    it(`keeps at most ${OFFER_MAX} offers, dropping the oldest`, () => {
+      let realm = calm();
+      // Each pass reaches a milestone and then forgets it, so it pays again.
+      for (let i = 0; i < OFFER_MAX + 2; i++) {
+        realm = nudge({ ...realm, storehouse: 3, milestones: [] });
+      }
+      expect(realm.offers).toHaveLength(OFFER_MAX);
+    });
+  });
+
+  describe('challenges', () => {
+    /** A realm whose only possible challenge is food: Storehouse 1 (food cap 500), every rival at peace. */
+    const foodOnly = (seed = 9) => ({ ...calm(seed), storehouse: 1 });
+
+    it('offers one every 15 years, starting at year 16', () => {
+      const realm = foodOnly();
+      expect(realm.challengeYear).toBe(1 + CHALLENGE.every);
+      expect(nudge(inYear(realm, 15)).challenge).toBeNull();
+      const offered = nudge(inYear(realm, 16));
+      expect(offered.challenge).toEqual({ kind: 'food', deadline: 16 + CHALLENGE.foodYears });
+      const line = offered.chronicle.at(-1)!;
+      expect(line).toEqual({
+        year: 16,
+        kind: 'traits',
+        text: `Challenge: stockpile ${CHALLENGE.food} food by year 19.`,
+      });
+    });
+
+    it('is offered only when none is active', () => {
+      const active = { kind: 'raid' as const, deadline: 30 };
+      const realm = { ...inYear(foodOnly(), 25), challenge: active, challengeYear: 1 };
+      expect(nudge(realm).challenge).toBe(active);
+    });
+
+    it('offers only challenges that can be met', () => {
+      expect(possibleChallenges(calm())).toEqual([]);
+      expect(nudge(inYear(calm(), 16)).challenge).toBeNull();
+      expect(possibleChallenges(foodOnly())).toEqual(['food']);
+      const full = { ...foodOnly(), stores: { food: 500, wood: 0, iron: 0, gold: 0 } };
+      expect(possibleChallenges(full)).toEqual([]);
+      const realm = createRealm(9);
+      const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
+      expect(possibleChallenges(hostile)).toEqual(['raid']);
+      expect(possibleChallenges({ ...hostile, storehouse: 1 })).toEqual(['food', 'raid']);
+    });
+
+    it('picks the challenge on the challenge stream of its year', () => {
+      const realm = createRealm(11);
+      const both = {
+        ...inYear(realm, 16),
+        storehouse: 1,
+        rivals: realm.rivals.map((r) => ({ ...r, hostile: true })),
+      };
+      const kinds = new Set<string>();
+      for (let seed = 0; seed < 40; seed++) {
+        const next = nudge({ ...both, seed });
+        const rng = traitRng(seed, 'challenge', 16);
+        expect(next.challenge!.kind).toBe(['food', 'raid'][Math.floor(rng() * 2)]);
+        kinds.add(next.challenge!.kind);
+      }
+      expect(kinds).toEqual(new Set(['food', 'raid']));
+    });
+
+    it('a met food challenge offers 1 of 2 rolled traits', () => {
+      const realm = {
+        ...inYear(foodOnly(), 17),
+        challenge: { kind: 'food' as const, deadline: 19 },
+        stores: { food: 499, wood: 0, iron: 0, gold: 0 },
+        jobs: { farmer: 20, woodcutter: 0, miner: 0 },
+      };
+      const next = nudge(realm);
+      expect(next.challenge).toBeNull();
+      expect(next.challengeYear).toBe(17 + CHALLENGE.every);
+      expect(next.offers).toHaveLength(1);
+      expect(next.offers[0]!.source).toBe('challenge');
+      expect(next.offers[0]!.choices).toHaveLength(OFFER_CHOICES.challenge);
+      const rng = traitRng(realm.seed, 'reward', 17);
+      expect(next.offers[0]!.choices).toEqual([rollTrait(rng), rollTrait(rng)]);
+      const [a, b] = next.offers[0]!.choices.map((t) => traitLabel(t));
+      expect(added(realm, next)).toEqual([
+        `Challenge met: ${CHALLENGE_INFO.food.goal}. Pick a trait: ${a} or ${b}.`,
+      ]);
+    });
+
+    it('failing at the deadline costs nothing', () => {
+      const realm = {
+        ...inYear(foodOnly(), 18),
+        time: 18 * YEAR_SECONDS - 0.25,
+        challenge: { kind: 'food' as const, deadline: 19 },
+      };
+      const next = nudge(realm);
+      expect(next.year).toBe(19);
+      expect(next.challenge).toBeNull();
+      expect(next.challengeYear).toBe(19 + CHALLENGE.every);
+      expect(next.offers).toEqual([]);
+      expect(next.traits).toEqual(realm.traits);
+      expect(added(realm, next)).toContain(
+        `Challenge failed: ${CHALLENGE_INFO.food.goal}. No penalty.`,
+      );
+      // Nothing else moves beyond what the same tick does without a challenge.
+      const plain = nudge({ ...realm, challenge: null, challengeYear: 1000 });
+      expect({ ...next.stores }).toEqual(plain.stores);
+      expect(population(next)).toBe(population(plain));
+    });
+
+    it('is still active the year before its deadline', () => {
+      const realm = {
+        ...inYear(foodOnly(), 18),
+        challenge: { kind: 'food' as const, deadline: 19 },
+      };
+      expect(nudge(realm).challenge).toEqual({ kind: 'food', deadline: 19 });
+    });
+
+    it('"repel the next raid" is met by a repelled raid and failed by a lost one', () => {
+      const realm = createRealm(3);
+      const hostile = {
+        ...inYear(realm, 20),
+        rivals: realm.rivals.map((r) => ({ ...r, hostile: true })),
+        challenge: { kind: 'raid' as const, deadline: 26 },
+      };
+      const won = raid({ ...hostile, soldiers: 1000 }, () => 0);
+      expect(won.challenge).toBeNull();
+      expect(won.offers).toHaveLength(1);
+      expect(won.chronicle.at(-1)!.text).toMatch(
+        new RegExp(`^Challenge met: ${CHALLENGE_INFO.raid.goal}\\. Pick a trait: .+ or .+\\.$`),
+      );
+      const lost = raid({ ...hostile, soldiers: 0 }, () => 0);
+      expect(lost.challenge).toBeNull();
+      expect(lost.offers).toEqual([]);
+      expect(lost.chronicle.at(-1)!.text).toBe(
+        `Challenge failed: ${CHALLENGE_INFO.raid.goal}. No penalty.`,
+      );
+      // A raid leaves a food challenge alone.
+      const food = { ...hostile, challenge: { kind: 'food' as const, deadline: 22 } };
+      expect(raid({ ...food, soldiers: 1000 }, () => 0).challenge).toEqual(food.challenge);
+    });
+  });
+
+  describe('Market trader', () => {
+    const market = (realm: Realm): Realm => ({
+      ...realm,
+      buildings: { ...realm.buildings, market: 1 },
+    });
+
+    it('needs a Market', () => {
+      const realm = tick(calm(), YEAR_SECONDS * 30);
+      expect(realm.trader).toEqual([]);
+      expect(realm.traderYear).toBe(0);
+    });
+
+    it('opens with 3 rolled traits as soon as there is a Market', () => {
+      const realm = inYear(market(calm()), 4);
+      const next = nudge(realm);
+      expect(next.traderYear).toBe(4);
+      expect(next.trader).toHaveLength(TRADER.stock);
+      const rng = traitRng(realm.seed, 'trader', 4);
+      for (const item of next.trader) {
+        expect(item.trait).toBe(rollTrait(rng));
+        const [min, max] = TIER_INFO[TRAIT_INFO[item.trait].tier].price;
+        expect(item.price).toBe(min + Math.floor(rng() * (max - min + 1)));
+      }
+      const line = next.chronicle.at(-1)!;
+      expect(line.kind).toBe('traits');
+      expect(line.text).toMatch(
+        /^The trader offers .+ for \d+ gold, .+ for \d+ gold and .+ for \d+ gold\.$/,
+      );
+    });
+
+    it('restocks every 10 years', () => {
+      const opened = nudge(inYear(market(calm()), 4));
+      const at13 = nudge(inYear(opened, 13));
+      expect(at13.trader).toBe(opened.trader);
+      const at14 = nudge(inYear(opened, 14));
+      expect(at14.traderYear).toBe(14);
+      expect(at14.trader).not.toEqual(opened.trader);
+      // Over a long run: one restock per 10 years.
+      const long = tick(opened, YEAR_SECONDS * 50);
+      const restocks = long.chronicle.filter((c) => c.text.startsWith('The trader offers'));
+      expect(restocks.map((c) => c.year)).toEqual([4, 14, 24, 34, 44, 54]);
+    });
+
+    it('keeps every price within its tier range', () => {
+      for (let seed = 0; seed < 300; seed++) {
+        const next = nudge({ ...market(calm()), seed });
+        for (const { trait, price } of next.trader) {
+          const [min, max] = TIER_INFO[TRAIT_INFO[trait].tier].price;
+          expect(Number.isInteger(price)).toBe(true);
+          expect(price).toBeGreaterThanOrEqual(min);
+          expect(price).toBeLessThanOrEqual(max);
+        }
+      }
+    });
+
+    const shop = (gold: number, storehouse = 3): Realm => ({
+      ...calm(),
+      storehouse,
+      stores: { food: 100, wood: 0, iron: 0, gold },
+      trader: [
+        { trait: 'timberClans', price: 200 },
+        { trait: 'goldenAge', price: 3000 },
+      ],
+      traderYear: 1,
+    });
+
+    it('sells a trait for its price', () => {
+      const realm = shop(3500);
+      const next = buyTrait(realm, 1);
+      expect(next.stores.gold).toBe(500);
+      expect(next.traits.goldenAge).toEqual({ level: 1, duplicates: 0 });
+      expect(next.trader).toEqual([{ trait: 'timberClans', price: 200 }]);
+      expect(added(realm, next)).toEqual([
+        `Bought ${traitLabel('goldenAge')} from the trader for 3000 gold.`,
+        `Gained the trait ${traitLabel('goldenAge')}.`,
+      ]);
+      // An owned trait bought again is a duplicate.
+      const again = buyTrait(buyTrait(shop(3500), 0), 0);
+      expect(again.traits.timberClans).toEqual({ level: 1, duplicates: 0 });
+      const twice = buyTrait({ ...realm, traits: { goldenAge: { level: 1, duplicates: 0 } } }, 1);
+      expect(twice.traits.goldenAge).toEqual({ level: 1, duplicates: 1 });
+    });
+
+    it('cannot sell while gold is short', () => {
+      const realm = shop(2999);
+      expect(buyTrait(realm, 1)).toBe(realm);
+    });
+
+    it('cannot sell above the gold cap', () => {
+      // Storehouse 2 caps gold at 1,200; even gold held past the cap can't pay a 3,000 price.
+      const realm = shop(5000, 2);
+      expect(buyTrait(realm, 1)).toBe(realm);
+      expect(buyTrait(realm, 0).trader).toHaveLength(1);
+    });
+
+    it.each([-1, 2, 0.5, NaN, Infinity])('ignores item %s', (index) => {
+      const realm = shop(5000);
+      expect(buyTrait(realm, index)).toBe(realm);
+    });
+  });
+
+  it('a long run rolls the same trait sources from the same seed', () => {
+    const run = (seed: number) => {
+      const realm = createRealm(seed);
+      const busy = {
+        ...realm,
+        storehouse: 1,
+        soldiers: 5,
+        buildings: { ...realm.buildings, market: 1 },
+      };
+      return tick(busy, YEAR_SECONDS * 120);
+    };
+    const a = run(77);
+    expect(a.chronicle.some((c) => c.text.startsWith('Challenge'))).toBe(true);
+    expect(a).toEqual(run(77));
+    expect(a.trader).not.toEqual(run(78).trader);
   });
 });

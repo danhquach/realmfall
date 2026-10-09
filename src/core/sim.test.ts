@@ -54,6 +54,18 @@ describe('simulate', () => {
 describe('decide', () => {
   const rng = () => createRng(99);
 
+  it('takes the first choice of every pending trait offer and slots it', () => {
+    const offers: Realm['offers'] = [
+      { source: 'milestone', choices: ['goldenAge', 'timberClans', 'horseLords'] },
+      { source: 'challenge', choices: ['fertileValleys', 'goldenAge'] },
+    ];
+    const next = decide({ ...createRealm(1), offers }, rng());
+    expect(next.offers).toEqual([]);
+    expect(next.traits.goldenAge).toBeDefined();
+    expect(next.traits.fertileValleys).toBeDefined();
+    expect(next.slots).toEqual(expect.arrayContaining(['goldenAge', 'fertileValleys']));
+  });
+
   it('attacks and annexes the weakest rival when the odds clear the bar', () => {
     const realm: Realm = { ...createRealm(1), soldiers: 200 };
     const weakest = realm.rivals.reduce((a, b) => (b.power < a.power ? b : a));

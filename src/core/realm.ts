@@ -27,13 +27,24 @@ export type Trait = (typeof TRAITS)[number];
 export const TIERS = ['common', 'fine', 'noble', 'royal', 'mythic'] as const;
 export type Tier = (typeof TIERS)[number];
 
-/** Sell price of a duplicate and the first ring whose rivals hold the tier (§9). */
-export const TIER_INFO: Record<Tier, { name: string; sellGold: number; fromRing: number }> = {
-  common: { name: 'Common', sellGold: 40, fromRing: 1 },
-  fine: { name: 'Fine', sellGold: 75, fromRing: 2 },
-  noble: { name: 'Noble', sellGold: 150, fromRing: 3 },
-  royal: { name: 'Royal', sellGold: 300, fromRing: 4 },
-  mythic: { name: 'Mythic', sellGold: 600, fromRing: 6 },
+interface TierInfo {
+  name: string;
+  /** Trader price range in gold, both ends inclusive. */
+  price: readonly [number, number];
+  sellGold: number;
+  /** Chance a rolled trait lands on this tier. */
+  odds: number;
+  /** First ring whose rivals hold the tier. */
+  fromRing: number;
+}
+
+/** The tier table of docs/design.md §9. */
+export const TIER_INFO: Record<Tier, TierInfo> = {
+  common: { name: 'Common', price: [150, 250], sellGold: 40, odds: 0.45, fromRing: 1 },
+  fine: { name: 'Fine', price: [300, 500], sellGold: 75, odds: 0.3, fromRing: 2 },
+  noble: { name: 'Noble', price: [600, 1000], sellGold: 150, odds: 0.15, fromRing: 3 },
+  royal: { name: 'Royal', price: [1200, 1800], sellGold: 300, odds: 0.07, fromRing: 4 },
+  mythic: { name: 'Mythic', price: [2500, 4000], sellGold: 600, odds: 0.03, fromRing: 6 },
 };
 
 /**
@@ -128,6 +139,37 @@ export interface OwnedTrait {
   duplicates: number;
 }
 
+/** One-off goals that each pay out a trait offer once (docs/design.md §9). */
+export const MILESTONES = ['people', 'battles', 'storehouse', 'raids'] as const;
+export type Milestone = (typeof MILESTONES)[number];
+
+/** Where a trait offer came from; each source offers a set number of choices (§9). */
+export const OFFER_CHOICES = { milestone: 3, challenge: 2 } as const;
+export type OfferSource = keyof typeof OFFER_CHOICES;
+export const OFFER_SOURCES = Object.keys(OFFER_CHOICES) as OfferSource[];
+
+/** Rolled traits waiting for the player to pick one. */
+export interface TraitOffer {
+  source: OfferSource;
+  choices: Trait[];
+}
+
+/** The kinds of challenge that can be offered (docs/design.md §9). */
+export const CHALLENGES = ['food', 'raid'] as const;
+export type ChallengeKind = (typeof CHALLENGES)[number];
+
+/** The active challenge; it fails once the year reaches `deadline`. */
+export interface Challenge {
+  kind: ChallengeKind;
+  deadline: number;
+}
+
+/** A trait on the Market trader's shelf and its price in gold (§9). */
+export interface TraderItem {
+  trait: Trait;
+  price: number;
+}
+
 /** A rival kingdom, known only by its place name (docs/design.md §7). */
 export interface Rival {
   name: string;
@@ -188,6 +230,20 @@ export interface Realm {
   slots: (Trait | null)[];
   /** Per slot, the first year it can be swapped again. */
   slotReadyYear: number[];
+  /** Battles won and raids on the capital repelled, for milestones (§9). */
+  battlesWon: number;
+  raidsRepelled: number;
+  /** Milestones already paid out. */
+  milestones: Milestone[];
+  /** Trait offers not yet picked, oldest first. */
+  offers: TraitOffer[];
+  challenge: Challenge | null;
+  /** First year a new challenge may be offered. */
+  challengeYear: number;
+  /** The trader's unsold stock. */
+  trader: TraderItem[];
+  /** Year the trader last restocked; 0 while it has never opened. */
+  traderYear: number;
   chronicle: ChronicleEntry[];
 }
 
@@ -237,6 +293,14 @@ export function createRealm(seed: number): Realm {
     traits: {},
     slots: [null, null, null],
     slotReadyYear: [1, 1, 1],
+    battlesWon: 0,
+    raidsRepelled: 0,
+    milestones: [],
+    offers: [],
+    challenge: null,
+    challengeYear: 1 + CHALLENGE.every,
+    trader: [],
+    traderYear: 0,
     chronicle: [],
   };
 }
@@ -450,6 +514,7 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   const fresh = createRival(rng, capPower(strongest * BATTLE.nextRivalScale), ring, taken);
   const annexed: Realm = {
     ...realm,
+    battlesWon: realm.battlesWon + 1,
     soldiers: realm.soldiers - lost,
     idle: realm.idle + Math.floor(rival.power / BATTLE.annexPeoplePer),
     annexedHousing: realm.annexedHousing + BATTLE.annexHousing,
@@ -494,8 +559,12 @@ export function raid(realm: Realm, rng: Rng): Realm {
   if (hostile.length === 0) return realm;
   const rival = pick(rng, hostile);
   const strength = rival.power * (RAID.minStrength + (RAID.maxStrength - RAID.minStrength) * rng());
+  // "Repel the next raid" (§9) ends with this raid, met or failed.
+  const end = (next: Realm, met: boolean) =>
+    realm.challenge?.kind === 'raid' ? endChallenge(next, met) : next;
   if (armyPower(realm) >= strength) {
-    return chronicle(realm, 'raids', `Repelled a raid from ${rival.name}.`);
+    const next = { ...realm, raidsRepelled: realm.raidsRepelled + 1 };
+    return end(chronicle(next, 'raids', `Repelled a raid from ${rival.name}.`), true);
   }
   const safe = safeAmounts(realm);
   const stores = { ...realm.stores };
@@ -504,7 +573,7 @@ export function raid(realm: Realm, rng: Rng): Realm {
   const text = lost.some((n) => n > 0)
     ? `${rival.name} raided the capital: lost ${lost[0]} food and ${lost[1]} wood.`
     : `${rival.name} raided the capital but found nothing to take.`;
-  return chronicle({ ...realm, stores }, 'raids', text);
+  return end(chronicle({ ...realm, stores }, 'raids', text), false);
 }
 
 /** Store `k` after adding `amount`, stopped at its cap but never lowering a store already over it. */
@@ -739,6 +808,203 @@ export function traitModifiers(realm: Realm): Record<Stat, number> {
 /** True while `trait` sits in a slot. */
 export function isSlotted(realm: Realm, trait: Trait): boolean {
   return realm.slots.includes(trait);
+}
+
+/**
+ * Rolls one trait (§9): a tier by its roll odds, then a trait of that tier,
+ * each equally likely. It may be one already owned.
+ */
+export function rollTrait(rng: Rng): Trait {
+  let r = rng();
+  // The odds sum to 1 up to float error; a roll past them all lands on the last tier.
+  const tier = TIERS.find((t) => (r -= TIER_INFO[t].odds) < 0) ?? TIERS[TIERS.length - 1]!;
+  return pick(
+    rng,
+    TRAITS.filter((t) => TRAIT_INFO[t].tier === tier),
+  );
+}
+
+/** Seed salts of the trait-source streams. */
+const TRAIT_STREAMS = {
+  milestone: 0x4d494c45,
+  challenge: 0x4348414c,
+  reward: 0x52574152,
+  trader: 0x54524144,
+} as const;
+
+/**
+ * The rng for roll `n` of a trait source, from its own stream derived from the
+ * run's seed, so offline catch-up rolls the same traits as live play.
+ */
+export function traitRng(seed: number, stream: keyof typeof TRAIT_STREAMS, n: number): Rng {
+  return createRng((seed ^ TRAIT_STREAMS[stream] ^ Math.imul(n, 0x9e3779b9)) >>> 0);
+}
+
+/** Pending offers kept; past this the oldest is dropped, so an idle run can't pile them up. */
+export const OFFER_MAX = 10;
+
+/**
+ * What each milestone asks (§9).
+ *
+ * TODO(#27 Garrisons and claiming): add "hold 5 sites" once sites exist,
+ * appended last so the other milestones keep their rng streams.
+ */
+export const MILESTONE_INFO: Record<Milestone, { goal: string; reached: (r: Realm) => boolean }> = {
+  people: { goal: '50 people', reached: (r) => population(r) >= 50 },
+  battles: { goal: 'win 10 battles', reached: (r) => r.battlesWon >= 10 },
+  storehouse: { goal: 'Storehouse level 3', reached: (r) => r.storehouse >= 3 },
+  raids: { goal: 'repel 5 raids', reached: (r) => r.raidsRepelled >= 5 },
+};
+
+/** Challenge timing and goals (§9). */
+export const CHALLENGE = {
+  every: 15,
+  food: 500,
+  foodYears: 3,
+  raidYears: 6,
+} as const;
+
+/**
+ * What each challenge asks and its deadline in years (§9).
+ *
+ * TODO(#27 Garrisons and claiming): add "claim a site in 4 years" once sites exist.
+ */
+export const CHALLENGE_INFO: Record<ChallengeKind, { goal: string; years: number }> = {
+  food: { goal: `stockpile ${CHALLENGE.food} food`, years: CHALLENGE.foodYears },
+  raid: { goal: 'repel the next raid', years: CHALLENGE.raidYears },
+};
+
+/** Trader restock interval and stock size (§9). */
+export const TRADER = { every: 10, stock: 3 } as const;
+
+/** "A", "A or B", "A, B or C". */
+function orList(items: string[], last = 'or'): string {
+  return items.length < 2
+    ? items.join('')
+    : `${items.slice(0, -1).join(', ')} ${last} ${items.at(-1)}`;
+}
+
+/** Adds an offer of rolled traits from `source`, dropping the oldest past OFFER_MAX. */
+function offer(realm: Realm, source: OfferSource, rng: Rng, why: string): Realm {
+  const choices = Array.from({ length: OFFER_CHOICES[source] }, () => rollTrait(rng));
+  const offers = [...realm.offers, { source, choices }].slice(-OFFER_MAX);
+  const text = `${why} Pick a trait: ${orList(choices.map(traitLabel))}.`;
+  return chronicle({ ...realm, offers }, 'traits', text);
+}
+
+/**
+ * Takes choice `choice` of pending offer `index` (§9): gains that trait, or a
+ * duplicate if it is owned, and closes the offer. Nothing changes if there is
+ * no such offer or choice.
+ */
+export function pickOffer(realm: Realm, index: number, choice: number): Realm {
+  const trait = realm.offers[index]?.choices[choice];
+  if (!Number.isInteger(index) || !Number.isInteger(choice) || trait === undefined) return realm;
+  const offers = realm.offers.filter((_, i) => i !== index);
+  const source = realm.offers[index]!.source;
+  const next = chronicle(
+    { ...realm, offers },
+    'traits',
+    `Picked ${traitLabel(trait)} from a ${source} offer.`,
+  );
+  return gainTrait(next, trait);
+}
+
+/**
+ * The challenges that can be offered now: food needs a food cap of 500 and
+ * less than 500 in store (or it would be met at once), a raid a hostile rival.
+ */
+export function possibleChallenges(realm: Realm): ChallengeKind[] {
+  return CHALLENGES.filter((c) => {
+    if (c === 'food')
+      return storeCaps(realm).food >= CHALLENGE.food && realm.stores.food < CHALLENGE.food;
+    return realm.rivals.some((r) => r.hostile);
+  });
+}
+
+/** Ends the active challenge; a met one offers 1 of 2 rolled traits, a failed one costs nothing. */
+function endChallenge(realm: Realm, met: boolean): Realm {
+  const goal = CHALLENGE_INFO[realm.challenge!.kind].goal;
+  const next = { ...realm, challenge: null, challengeYear: realm.year + CHALLENGE.every };
+  if (!met) return chronicle(next, 'traits', `Challenge failed: ${goal}. No penalty.`);
+  return offer(
+    next,
+    'challenge',
+    traitRng(realm.seed, 'reward', realm.year),
+    `Challenge met: ${goal}.`,
+  );
+}
+
+/** Restocks the trader with 3 rolled traits, each priced within its tier's range (§9). */
+function restock(realm: Realm): Realm {
+  const rng = traitRng(realm.seed, 'trader', realm.year);
+  const trader = Array.from({ length: TRADER.stock }, () => {
+    const trait = rollTrait(rng);
+    const [min, max] = TIER_INFO[TRAIT_INFO[trait].tier].price;
+    return { trait, price: int(rng, min, max) };
+  });
+  const wares = trader.map((t) => `${traitLabel(t.trait)} for ${t.price} gold`);
+  return chronicle(
+    { ...realm, trader, traderYear: realm.year },
+    'traits',
+    `The trader offers ${orList(wares, 'and')}.`,
+  );
+}
+
+/**
+ * Buys item `index` of the trader's stock at its price (§9). Nothing changes
+ * if there is no such item, gold is short, or the price is above the gold cap.
+ */
+export function buyTrait(realm: Realm, index: number): Realm {
+  const item = realm.trader[index];
+  if (!Number.isInteger(index) || !item) return realm;
+  const cost = { gold: item.price };
+  if (item.price > storeCaps(realm).gold || !canAfford(realm, cost)) return realm;
+  const trader = realm.trader.filter((_, i) => i !== index);
+  const next = chronicle(
+    { ...pay(realm, cost), trader },
+    'traits',
+    `Bought ${traitLabel(item.trait)} from the trader for ${item.price} gold.`,
+  );
+  return gainTrait(next, item.trait);
+}
+
+/**
+ * Runs the trait sources that trigger on the realm's state (§9): pays out each
+ * newly reached milestone once, ends the active challenge when met or at its
+ * deadline, offers a new one when none is active and its year has come, and
+ * opens or restocks the trader. Every roll is on a stream keyed by the
+ * milestone or the year, so the same seed always rolls the same traits.
+ */
+function traitSources(realm: Realm): Realm {
+  let next = realm;
+  MILESTONES.forEach((m, i) => {
+    if (next.milestones.includes(m) || !MILESTONE_INFO[m].reached(next)) return;
+    next = { ...next, milestones: [...next.milestones, m] };
+    const why = `Milestone reached: ${MILESTONE_INFO[m].goal}.`;
+    next = offer(next, 'milestone', traitRng(next.seed, 'milestone', i), why);
+  });
+  const active = next.challenge;
+  if (active?.kind === 'food' && next.stores.food >= CHALLENGE.food) {
+    next = endChallenge(next, true);
+  } else if (active && next.year >= active.deadline) {
+    next = endChallenge(next, false);
+  } else if (!active && next.year >= next.challengeYear) {
+    const kinds = possibleChallenges(next);
+    if (kinds.length > 0) {
+      const kind = pick(traitRng(next.seed, 'challenge', next.year), kinds);
+      const { goal, years } = CHALLENGE_INFO[kind];
+      const deadline = next.year + years;
+      next = chronicle(
+        { ...next, challenge: { kind, deadline } },
+        'traits',
+        `Challenge: ${goal} by year ${deadline}.`,
+      );
+    }
+  }
+  const restockDue = next.traderYear === 0 || next.year >= next.traderYear + TRADER.every;
+  if (next.buildings.market > 0 && restockDue) next = restock(next);
+  return next;
 }
 
 /** An amount of each store; resources left out cost nothing. */
@@ -1089,12 +1355,12 @@ function step(realm: Realm, dt: number): Realm {
   next = { ...next, hunger, soldiers, desertion };
   // Years, raids and events run in time order, so each meets the rivals and year of its moment.
   const toYear = (year: number) => {
-    while (next.year < year) next = { ...growRivals(next), year: next.year + 1 };
+    while (next.year < year) next = traitSources({ ...growRivals(next), year: next.year + 1 });
   };
   for (const h of happenings(next.seed, realm.time, next.time)) {
     toYear(1 + Math.floor(h.at / YEAR_SECONDS));
     next = h.run(next);
   }
   toYear(1 + Math.floor(next.time / YEAR_SECONDS));
-  return next;
+  return traitSources(next);
 }

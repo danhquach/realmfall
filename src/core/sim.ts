@@ -8,6 +8,7 @@ import {
   createRealm,
   housingCap,
   population,
+  pickOffer,
   rates,
   RESOURCES,
   slotTrait,
@@ -74,8 +75,12 @@ function row(realm: Realm, year: number): YearRow {
   };
 }
 
-/** Fills every empty trait slot with an owned trait (free, §9). */
+/**
+ * Takes the first choice of every pending trait offer, then fills every empty
+ * slot with an owned trait (free, §9).
+ */
 function slotTraits(realm: Realm): Realm {
+  for (let n = realm.offers.length; n > 0; n--) realm = pickOffer(realm, 0, 0);
   for (const trait of TRAITS) {
     const slot = realm.slots.indexOf(null);
     if (slot === -1) break;

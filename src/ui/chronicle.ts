@@ -5,6 +5,7 @@ import {
   type ChronicleKind,
   type Realm,
 } from '../core/realm.ts';
+import { traitText } from './dom.ts';
 
 const KIND_NAMES: Record<ChronicleKind, string> = {
   events: 'Events',
@@ -21,7 +22,7 @@ function line(entry: ChronicleEntry): HTMLLIElement {
   const year = document.createElement('span');
   year.className = 'year';
   year.textContent = `Year ${entry.year}`;
-  li.append(year, ` ${entry.text}`);
+  li.append(year, ' ', ...traitText(entry.text));
   return li;
 }
 
