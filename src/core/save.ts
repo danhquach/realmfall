@@ -6,12 +6,16 @@ import {
   RIVAL,
   CHRONICLE_KINDS,
   CHRONICLE_MAX,
+  CONSTRUCTION_INFO,
+  CONSTRUCTIONS,
   JOBS,
   MILESTONES,
   OFFER_CHOICES,
   OFFER_MAX,
   OFFER_SOURCES,
+  QUEUE_MAX,
   RESOURCES,
+  STOREHOUSE_MAX,
   TIER_INFO,
   TRADER,
   TRAITS,
@@ -20,6 +24,8 @@ import {
   YEAR_SECONDS,
   type Challenge,
   type ChronicleEntry,
+  type Cost,
+  type Order,
   type OwnedTrait,
   type Realm,
   type Rival,
@@ -29,7 +35,7 @@ import {
 } from './realm.ts';
 
 /** Bump when the saved shape changes; a save of any other version starts a new game. */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /**
  * Bounds that keep a hand-edited save from freezing the page: the simulation
@@ -53,7 +59,7 @@ export const SAVE_LIMITS = {
   /** Store amounts. */
   amount: 1e300,
   /** Far past any reachable level; caps stay finite up to ~640. */
-  storehouse: 500,
+  storehouse: STOREHOUSE_MAX,
   rivals: 50,
   ring: 1000,
   nameChars: 40,
@@ -189,6 +195,24 @@ function traderItem(v: unknown): TraderItem {
   return { trait, price: int(own(o, 'price'), min, max) };
 }
 
+/** A construction order: what was paid, its build work, and work done no more than that. */
+function order(v: unknown): Order {
+  const o = obj(v);
+  const paid = obj(own(o, 'cost'));
+  const cost: Cost = {};
+  for (const k of RESOURCES) {
+    const x = own(paid, k);
+    if (x !== undefined) cost[k] = num(x, 0, SAVE_LIMITS.amount);
+  }
+  const work = num(own(o, 'work'), Number.MIN_VALUE, SAVE_LIMITS.amount);
+  return {
+    building: oneOf(own(o, 'building'), CONSTRUCTIONS),
+    cost,
+    work,
+    done: num(own(o, 'done'), 0, work),
+  };
+}
+
 function entry(v: unknown, year: number): ChronicleEntry {
   const o = obj(v);
   return {
@@ -220,6 +244,15 @@ function realm(v: unknown): Realm {
   if (rivals.length === 0) fail();
   const milestones = arr(own(o, 'milestones'), MILESTONES.length).map((m) => oneOf(m, MILESTONES));
   if (new Set(milestones).size !== milestones.length) fail();
+  const buildings = record(own(o, 'buildings'), BUILDINGS, count);
+  const storehouse = int(own(o, 'storehouse'), 0, SAVE_LIMITS.storehouse);
+  const queue = arr(own(o, 'queue'), QUEUE_MAX).map(order);
+  // Built plus queued stays within each building's max (one Barracks, Wall 5, tower 3).
+  for (const c of CONSTRUCTIONS) {
+    const max = CONSTRUCTION_INFO[c].max;
+    const have = c === 'storehouse' ? storehouse : buildings[c];
+    if (have + queue.filter((q) => q.building === c).length > max) fail();
+  }
   return {
     seed: int(own(o, 'seed'), 0, 0xffffffff),
     name: text(own(o, 'name'), NAME, SAVE_LIMITS.nameChars),
@@ -232,8 +265,9 @@ function realm(v: unknown): Realm {
     hunger: num(own(o, 'hunger'), 0, SAVE_LIMITS.backlog),
     soldiers: count(own(o, 'soldiers')),
     desertion: num(own(o, 'desertion'), 0, SAVE_LIMITS.backlog),
-    buildings: record(own(o, 'buildings'), BUILDINGS, count),
-    storehouse: int(own(o, 'storehouse'), 0, SAVE_LIMITS.storehouse),
+    buildings,
+    storehouse,
+    queue,
     annexedHousing: count(own(o, 'annexedHousing')),
     rivals,
     traits: owned,

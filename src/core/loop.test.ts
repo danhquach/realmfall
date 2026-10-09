@@ -5,6 +5,7 @@ import {
   RESOURCES,
   awaySummary,
   createRealm,
+  order,
   storeCaps,
   tick,
   train,
@@ -83,13 +84,17 @@ describe('advance', () => {
   });
 });
 
-/** A run with no farmers, a soldier and a hostile rival: wood hits its cap, food runs out, raids land. */
+/**
+ * A run with no farmers, a Barracks, a soldier and a hostile rival: wood hits
+ * its cap, food runs out, raids land.
+ */
 function busy(seed: number): Realm {
   const realm = createRealm(seed);
-  const jobs = { farmer: 0, woodcutter: 8, miner: 1 };
+  const jobs = { farmer: 0, woodcutter: 8, miner: 1, builder: 0 };
   const stores = { food: 50, wood: 190, iron: 20, gold: 100 };
   const rivals = realm.rivals.map((r, i) => ({ ...r, hostile: i === 0 }));
-  return train({ ...realm, jobs, idle: 1, stores, rivals }, 1);
+  const buildings = { ...realm.buildings, barracks: 1 };
+  return train({ ...realm, jobs, idle: 1, stores, rivals, buildings }, 1);
 }
 
 describe('catchUp', () => {
@@ -140,6 +145,26 @@ describe('catchUp', () => {
     // 1/3 + 14,400 steps of 0.25 comes out at 3599.9999999999995 s.
     const start = { ...createRealm(3), time: 1 / 3 };
     expect(catchUp(start, 3600).chronicle.at(-1)!.text).toMatch(/^Away 1h 0m: /);
+  });
+
+  it('carries the construction queue through time away, as live play would', () => {
+    // One builder: Hut (20 work) then Storehouse level 1 (30) are done after 50 s.
+    const realm = createRealm(4);
+    const start = order(
+      order({ ...realm, stores: { ...realm.stores, wood: 100 } }, 'hut'),
+      'storehouse',
+    );
+    expect(start.queue).toHaveLength(2);
+    let live = start;
+    for (let t = 0; t < 120; t += STEP) live = tick(live, STEP);
+    const away = catchUp(start, 120);
+    // The same realm, plus the "Away" summary line.
+    expect({ ...away, chronicle: away.chronicle.slice(0, -1) }).toEqual(live);
+    expect(away.buildings.hut).toBe(1);
+    expect(away.storehouse).toBe(1);
+    expect(away.queue).toEqual([]);
+    const partway = catchUp(start, 30);
+    expect(partway.queue).toEqual([{ ...start.queue[1]!, done: 10 }]);
   });
 
   it('keeps the Chronicle at its cap', () => {

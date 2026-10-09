@@ -35,6 +35,11 @@ export function button(label: string, onClick: () => void): HTMLButtonElement {
   return b;
 }
 
+/** Sets the accessible name, writing only on change. */
+export function setLabel(el: HTMLElement, label: string): void {
+  if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
+}
+
 export function setEnabled(b: HTMLButtonElement, enabled: boolean): void {
   const value = String(!enabled);
   if (b.getAttribute('aria-disabled') !== value) b.setAttribute('aria-disabled', value);

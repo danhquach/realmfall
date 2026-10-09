@@ -1,18 +1,27 @@
 import {
-  BUILDINGS,
+  CONSTRUCTION_INFO,
+  CONSTRUCTIONS,
   JOBS,
+  QUEUE_MAX,
   RESOURCES,
   RIVAL_ACTIONS,
   SOLDIER,
   armyPower,
   assign,
+  atMax,
   attack,
-  build,
-  buildingCost,
+  built,
   canAfford,
+  canOrder,
+  cancelOrder,
   disband,
   housingCap,
+  needText,
+  order,
+  orderCost,
+  orderWork,
   population,
+  queueView,
   rates,
   rivalView,
   scout,
@@ -21,16 +30,14 @@ import {
   train,
   tribute,
   unassign,
-  upgradeCost,
-  upgradeStorehouse,
+  unmetNeeds,
   winChance,
-  type Building,
   type Cost,
   type Job,
   type Realm,
 } from '../core/realm.ts';
 import type { Rng } from '../core/rng.ts';
-import { button, el, panel, setEnabled, setText, setTraitText } from './dom.ts';
+import { button, el, panel, setEnabled, setLabel, setText, setTraitText } from './dom.ts';
 import { mountGoalsPanel } from './goalsPanel.ts';
 import { mountTraitPanel } from './traitPanel.ts';
 
@@ -41,12 +48,7 @@ const JOB_LABELS: Record<Job, string> = {
   farmer: 'Farmers',
   woodcutter: 'Woodcutters',
   miner: 'Miners',
-};
-
-const BUILDING_LABELS: Record<Building, string> = {
-  hut: 'Hut',
-  market: 'Market',
-  forge: 'Forge',
+  builder: 'Builders',
 };
 
 /** "25 wood, 30 gold"; "free" for an empty cost. */
@@ -123,19 +125,29 @@ export function mountRealmPanels(
   const buildings = panel('Buildings');
   const buildList = el('ul', 'rows');
   buildings.append(buildList);
-  const buildRows = BUILDINGS.map((b) => {
+  const buildRows = CONSTRUCTIONS.map((c) => {
     const label = el('span', 'label');
-    const btn = button('', () => act((r) => build(r, b)));
+    const btn = button('', () => act((r) => order(r, c)));
     const li = el('li');
     li.append(label, btn);
     buildList.append(li);
-    return { b, label, btn };
+    return { c, li, label, btn };
   });
-  const storehouseLabel = el('span', 'label');
-  const storehouseBtn = button('', () => act(upgradeStorehouse));
-  const storehouseLi = el('li');
-  storehouseLi.append(storehouseLabel, storehouseBtn);
-  buildList.append(storehouseLi);
+  const queueStatus = el('p', 'note');
+  const queueList = el('ul', 'rows queue');
+  // Keeps `list-style: none` from dropping the list's semantics in Safari.
+  queueList.setAttribute('role', 'list');
+  // One row per queue slot, made once so a focused Cancel button keeps focus.
+  const queueRows = Array.from({ length: QUEUE_MAX }, (_, i) => {
+    const label = el('span', 'label');
+    const cancel = button('Cancel', () => act((r) => cancelOrder(r, i)));
+    const li = el('li');
+    li.append(label, cancel);
+    li.hidden = true;
+    queueList.append(li);
+    return { li, label, cancel };
+  });
+  buildings.append(el('h3', undefined, 'Queue'), queueStatus, queueList);
 
   const army = panel('Army');
   const armyLine = el('p');
@@ -150,7 +162,8 @@ export function mountRealmPanels(
   trainLi.append(soldiersLabel, el('span', 'controls'));
   trainLi.lastElementChild!.append(disbandBtn, trainBtn);
   armyList.append(trainLi);
-  army.append(el('p', 'note', `Each takes an idle peasant and ${formatCost(SOLDIER.cost)}.`));
+  const armyNote = el('p', 'note');
+  army.append(armyNote);
 
   const rivals = panel('Rivals');
   const rivalList = el('ul', 'rivals');
@@ -221,22 +234,52 @@ export function mountRealmPanels(
       setEnabled(more, realm.idle > 0);
     }
 
-    for (const { b, label, btn } of buildRows) {
-      const cost = buildingCost(realm, b);
-      setText(label, `${BUILDING_LABELS[b]}s ${realm.buildings[b]}`);
-      setText(btn, `Build ${BUILDING_LABELS[b]} (${formatCost(cost)})`);
-      setEnabled(btn, canAfford(realm, cost));
+    for (const { c, li, label, btn } of buildRows) {
+      const { name, levelled } = CONSTRUCTION_INFO[c];
+      const have = built(realm, c);
+      setText(label, levelled ? `${name} level ${have}` : `${name} ${have}`);
+      const needs = unmetNeeds(realm, c);
+      // A building already at its max stays built even if its requirement is lost (§5).
+      const locked = needs.length > 0 && !atMax(realm, c);
+      li.classList.toggle('locked', locked);
+      const done = have >= CONSTRUCTION_INFO[c].max;
+      if (atMax(realm, c)) setText(btn, !done ? 'Queued' : levelled ? 'Top level' : 'Built');
+      else if (locked) setText(btn, `Needs: ${needs.map(needText).join(', ')}`);
+      else setText(btn, `Order (${formatCost(orderCost(realm, c))}; ${orderWork(realm, c)} work)`);
+      setLabel(btn, `${btn.textContent} ${name}`);
+      setEnabled(btn, canOrder(realm, c));
     }
-    const next = upgradeCost(realm);
-    setText(storehouseLabel, `Storehouse level ${realm.storehouse}`);
-    setText(storehouseBtn, `Upgrade to ${realm.storehouse + 1} (${formatCost(next)})`);
-    setEnabled(storehouseBtn, canAfford(realm, next));
+    const view = queueView(realm);
+    setText(
+      queueStatus,
+      view.length === 0
+        ? `Empty. Up to ${QUEUE_MAX} orders.`
+        : realm.jobs.builder === 0
+          ? 'Waiting: no builders.'
+          : `${view.length} / ${QUEUE_MAX} orders.`,
+    );
+    queueRows.forEach(({ li, label, cancel }, i) => {
+      const o = view[i];
+      li.hidden = !o;
+      if (!o) return;
+      const left =
+        o.secondsLeft === null || !Number.isFinite(o.secondsLeft)
+          ? 'waiting'
+          : `${Math.ceil(o.secondsLeft)} s left`;
+      setText(label, `${o.label}: ${Math.floor(o.done)} / ${o.work} work, ${left}`);
+      setLabel(cancel, `Cancel ${o.label}`);
+    });
 
     const power = armyPower(realm);
     setText(armyLine, `Army power ${Math.round(power)}`);
     setText(soldiersLabel, `Spearmen ${realm.soldiers}`);
     setEnabled(disbandBtn, realm.soldiers > 0);
-    setEnabled(trainBtn, realm.idle > 0 && canAfford(realm, SOLDIER.cost));
+    const barracks = realm.buildings.barracks > 0;
+    setEnabled(trainBtn, barracks && realm.idle > 0 && canAfford(realm, SOLDIER.cost));
+    setText(
+      armyNote,
+      barracks ? `Each takes an idle peasant and ${formatCost(SOLDIER.cost)}.` : 'Needs: Barracks.',
+    );
 
     const names = new Set(realm.rivals.map((r) => r.name));
     for (const [name, row] of rivalRows) {

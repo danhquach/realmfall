@@ -5,10 +5,14 @@ import {
   RIVAL,
   assign,
   attack,
-  build,
+  cancelOrder,
   createRealm,
   gainTrait,
+  order,
+  QUEUE_MAX,
+  queueView,
   scout,
+  storeCaps,
   slotTrait,
   tick,
   train,
@@ -19,21 +23,35 @@ import {
 import { createRng } from './rng.ts';
 import { SAVE_LIMITS, SAVE_VERSION, parse, parseSave, serialize } from './save.ts';
 
-/** A realm some way into a run: jobs, buildings, soldiers, traits, battles and a Chronicle. */
+/**
+ * A realm some way into a run: jobs, buildings, soldiers, traits, battles, a
+ * Chronicle, and a construction queue part-way through its first order.
+ */
 function played(): Realm {
   let realm = createRealm(12345);
-  realm = { ...realm, stores: { food: 200, wood: 200, iron: 50, gold: 150 } };
+  realm = { ...realm, idle: 8, stores: { food: 200, wood: 200, iron: 50, gold: 150 } };
   realm = assign(realm, 'miner', 2);
-  realm = build(realm, 'hut');
+  realm = order(order(realm, 'hut'), 'barracks');
+  // One builder: the Hut (20 work) and the Barracks (40) are done after 60 s.
+  realm = advance(realm, 60).realm;
+  realm = { ...realm, stores: { food: 200, wood: 200, iron: 50, gold: 150 } };
   realm = train(realm, 2);
   realm = scout(realm, 0);
   realm = gainTrait(gainTrait(realm, 'timberClans'), 'timberClans');
   realm = slotTrait(realm, 1, 'timberClans');
   realm = attack(realm, 0, createRng(7));
-  realm = build(realm, 'market');
   // Storehouse 3 pays a milestone offer, and its food cap allows a food challenge.
   realm = { ...realm, storehouse: 3 };
-  return advance(realm, 600).realm;
+  realm = order(realm, 'market');
+  realm = advance(realm, 600).realm;
+  // Two builders, fed, so the first order is part-way done at save time.
+  realm = {
+    ...realm,
+    jobs: { ...realm.jobs, builder: 2 },
+    stores: { ...realm.stores, food: 500, wood: 1000, iron: 200 },
+  };
+  realm = order(order(order(realm, 'hut'), 'wall'), 'wall');
+  return advance(realm, 5).realm;
 }
 
 /** The save of `realm` as a plain object to corrupt. */
@@ -68,7 +86,27 @@ describe('save round trip', () => {
     expect(realm.trader.length).toBeGreaterThan(0);
     expect(realm.milestones).toContain('storehouse');
     expect(realm.battlesWon).toBeGreaterThan(0);
+    expect(realm.buildings).toMatchObject({ hut: 1, barracks: 1, market: 1 });
+    expect(realm.queue.map((o) => o.building)).toEqual(['hut', 'wall', 'wall']);
+    expect(realm.queue[0]!.done).toBeGreaterThan(0);
     expect(parse(serialize(realm))).toEqual(realm);
+  });
+
+  it('keeps the queue and its progress through a load and offline time', () => {
+    const realm = played();
+    const loaded = parse(serialize(realm))!;
+    // The builders carry on from where they were: the first Hut finishes on time.
+    const left = realm.queue[0]!.work - realm.queue[0]!.done;
+    const away = advance(loaded, Math.ceil(left / realm.jobs.builder)).realm;
+    expect(away.buildings.hut).toBe(realm.buildings.hut + 1);
+    expect(away.queue[0]!.building).toBe('wall');
+  });
+
+  it('starts a new game from an older save without a queue', () => {
+    const old = saved();
+    delete old.realm.queue;
+    expect(parse(JSON.stringify({ ...old, version: 2 }))).toBeNull();
+    expect(SAVE_VERSION).toBe(3);
   });
 
   it('restores a new realm exactly', () => {
@@ -152,6 +190,7 @@ describe('parse rejects bad saves', () => {
     'desertion',
     'buildings',
     'storehouse',
+    'queue',
     'annexedHousing',
     'rivals',
     'traits',
@@ -203,7 +242,38 @@ describe('parse rejects bad saves', () => {
     ['hunger', 'lots'],
     ['soldiers', 1.25],
     ['desertion', -1],
+    [['jobs', 'builder'], -1],
+    [['jobs', 'builder'], '1'],
     [['buildings', 'hut'], 2.5],
+    ['buildings', { hut: 0, market: 0, forge: 0 }], // a save from before the Barracks
+    [['buildings', 'barracks'], 2], // built once
+    [['buildings', 'wall'], 6], // levels 1–5
+    [['buildings', 'tower'], 4], // levels 1–3
+    ['queue', {}],
+    ['queue', null],
+    [
+      'queue',
+      Array(QUEUE_MAX + 1).fill({ building: 'hut', cost: { wood: 25 }, work: 20, done: 0 }),
+    ],
+    ['queue', [null]],
+    ['queue', [{ building: 'castle', cost: {}, work: 20, done: 0 }]],
+    ['queue', [{ building: '__proto__', cost: {}, work: 20, done: 0 }]],
+    ['queue', [{ building: 'toString', cost: {}, work: 20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: null, work: 20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: [25], work: 20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: { wood: -1 }, work: 20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: { wood: '25' }, work: 20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: { wood: SAVE_LIMITS.amount * 10 }, work: 20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: {}, work: 0, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: {}, work: -20, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: {}, work: null, done: 0 }]], // Infinity reads back as null
+    ['queue', [{ building: 'hut', cost: {}, work: SAVE_LIMITS.amount * 10, done: 0 }]],
+    ['queue', [{ building: 'hut', cost: {}, work: 20, done: -1 }]],
+    ['queue', [{ building: 'hut', cost: {}, work: 20, done: 21 }]], // more done than needed
+    ['queue', [{ building: 'hut', cost: {}, work: 20 }]],
+    ['queue', [{ building: 'barracks', cost: {}, work: 40, done: 0 }]], // a second Barracks
+    ['queue', Array(4).fill({ building: 'tower', cost: {}, work: 40, done: 0 })], // past level 3
+    [['buildings', 'wall'], 4], // with two levels queued: past level 5
     ['storehouse', SAVE_LIMITS.storehouse + 1],
     ['storehouse', -1],
     ['annexedHousing', -10],
@@ -280,6 +350,77 @@ describe('parse rejects bad saves', () => {
     [['chronicle', 0, 'text'], '<script>alert(1)</script>\u0000'],
   ])('%j set to %j', (path, value) => {
     expect(parse(corrupt(Array.isArray(path) ? path : [path], value))).toBeNull();
+  });
+});
+
+describe('construction queue in a save', () => {
+  const withQueue = (fields: Record<string, unknown>) => {
+    const save = saved();
+    Object.assign(save.realm, fields);
+    return JSON.stringify(save);
+  };
+  const storehouseOrder = { building: 'storehouse', cost: {}, work: 30, done: 0 };
+
+  it('keeps Storehouse level plus queued levels within the save limit', () => {
+    const at = { storehouse: SAVE_LIMITS.storehouse, queue: [] };
+    expect(parse(withQueue(at))).not.toBeNull();
+    expect(parse(withQueue({ ...at, queue: [storehouseOrder] }))).toBeNull();
+  });
+
+  it('loads an empty queue and a cost with resources left out', () => {
+    expect(parse(withQueue({ queue: [] }))!.queue).toEqual([]);
+    const free = { building: 'hut', cost: {}, work: 20, done: 20 };
+    expect(parse(withQueue({ queue: [free] }))!.queue).toEqual([free]);
+  });
+
+  it('does not copy __proto__ or unknown keys from an order or its cost', () => {
+    const order = JSON.parse(
+      '{"__proto__":{"polluted":true},"extra":1,"building":"hut",' +
+        '"cost":{"__proto__":{"polluted":true},"wood":25,"stone":3},"work":20,"done":5}',
+    );
+    const loaded = parse(withQueue({ queue: [order] }))!;
+    expect(loaded.queue).toEqual([{ building: 'hut', cost: { wood: 25 }, work: 20, done: 5 }]);
+    expect(Object.getPrototypeOf(loaded.queue[0])).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(loaded.queue[0]!.cost)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('refunds a hostile order cost only up to the store cap', () => {
+    const huge = { building: 'hut', cost: { wood: SAVE_LIMITS.amount }, work: 20, done: 0 };
+    const realm = parse(withQueue({ queue: [huge] }))!;
+    const cancelled = cancelOrder(realm, 0);
+    expect(cancelled.stores.wood).toBe(Math.max(realm.stores.wood, storeCaps(realm).wood));
+    expect(cancelled.queue).toEqual([]);
+  });
+
+  it('accepts the smallest positive build work and finishes it at once', () => {
+    const tiny = { building: 'hut', cost: {}, work: Number.MIN_VALUE, done: 0 };
+    const realm = parse(withQueue({ queue: [tiny] }))!;
+    expect(realm.queue).toEqual([tiny]);
+    expect(tick({ ...realm, jobs: { ...realm.jobs, builder: 1 } }, 0.25).queue).toEqual([]);
+  });
+
+  it('shows a huge loaded queue without throwing', () => {
+    const big = { building: 'hut', cost: {}, work: SAVE_LIMITS.amount, done: 0 };
+    const realm = parse(withQueue({ queue: Array(QUEUE_MAX).fill(big) }))!;
+    const view = queueView({ ...realm, jobs: { ...realm.jobs, builder: 1 } });
+    expect(view).toHaveLength(QUEUE_MAX);
+    for (const o of view) expect(o.secondsLeft === null || o.secondsLeft >= 0).toBe(true);
+  });
+
+  it('ticks a full queue with builders at the count limit quickly', () => {
+    const big = { building: 'hut', cost: {}, work: SAVE_LIMITS.amount, done: 0 };
+    const save = saved();
+    Object.assign(save.realm, {
+      queue: Array(QUEUE_MAX).fill(big),
+      jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: SAVE_LIMITS.count },
+    });
+    const realm = parse(JSON.stringify(save))!;
+    const start = performance.now();
+    const next = tick(realm, 0.25);
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(next.queue.length).toBeLessThanOrEqual(QUEUE_MAX);
+    expect(parse(serialize(next))).toEqual(next);
   });
 });
 
@@ -402,7 +543,7 @@ describe('a loaded realm runs', () => {
   });
 
   it('works off a growth backlog at the limit quickly', () => {
-    const buildings = { hut: SAVE_LIMITS.count, market: 0, forge: 0 };
+    const buildings = { ...createRealm(1).buildings, hut: SAVE_LIMITS.count };
     const { idle } = tickLoaded({ buildings, growth: SAVE_LIMITS.backlog });
     expect(idle).toBeLessThanOrEqual(SAVE_LIMITS.backlog / 4 + 1);
   });

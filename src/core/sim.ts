@@ -4,20 +4,23 @@ import {
   armyPower,
   assign,
   attack,
-  build,
   createRealm,
   housingCap,
+  order,
+  PEOPLE,
   population,
   pickOffer,
+  queued,
   rates,
   RESOURCES,
   slotTrait,
   storeCaps,
   train,
   TRAITS,
-  upgradeStorehouse,
+  unassign,
   winChance,
   YEAR_SECONDS,
+  type Construction,
   type Realm,
   type Resource,
 } from './realm.ts';
@@ -44,8 +47,10 @@ export const STRATEGY = {
   attackOdds: 0.6,
   /** A store this full (share of its cap) asks for the next Storehouse level. */
   storeFull: 0.9,
-  /** Soldiers needed before a Forge is worth building. */
+  /** Soldiers needed before a Forge or a Wall level is worth building. */
   forgeAfter: 10,
+  /** People per builder kept on the job (at least one). */
+  peoplePerBuilder: 7,
 } as const;
 
 export interface YearRow {
@@ -89,15 +94,36 @@ function slotTraits(realm: Realm): Realm {
   return realm;
 }
 
-/** Huts when housing is full, a Storehouse level when a store is nearly capped, then Markets, then Forges. */
+/**
+ * Orders, one of each at a time: a Hut when housing is one Hut from full, a Storehouse
+ * level when a store is nearly capped, the Barracks once unlocked, then a
+ * Market, then a Forge and a Wall level once the army is big enough. Each is
+ * ordered only while none of its kind is queued, so the queue never clogs.
+ */
 function buildUp(realm: Realm): Realm {
-  if (population(realm) >= housingCap(realm)) realm = build(realm, 'hut');
+  const once = (c: Construction) => (queued(realm, c) === 0 ? order(realm, c) : realm);
+  realm = once('barracks');
+  if (population(realm) + PEOPLE.hutHousing >= housingCap(realm)) realm = once('hut');
+  if (realm.soldiers >= STRATEGY.forgeAfter) realm = once('forge');
   const caps = storeCaps(realm);
   if (RESOURCES.some((k) => realm.stores[k] >= caps[k] * STRATEGY.storeFull))
-    realm = upgradeStorehouse(realm);
-  realm = build(realm, 'market');
-  if (realm.soldiers >= STRATEGY.forgeAfter) realm = build(realm, 'forge');
+    realm = once('storehouse');
+  realm = once('market');
+  if (realm.soldiers >= STRATEGY.forgeAfter) realm = once('wall');
   return realm;
+}
+
+/**
+ * Keeps one builder per STRATEGY.peoplePerBuilder people (at least one) while
+ * anything is queued, and one otherwise; any surplus goes back to idle.
+ */
+function staffBuilders(realm: Realm): Realm {
+  const busy = realm.queue.length > 0;
+  const want = busy ? Math.max(1, Math.floor(population(realm) / STRATEGY.peoplePerBuilder)) : 1;
+  const have = realm.jobs.builder;
+  return want > have
+    ? assign(realm, 'builder', want - have)
+    : unassign(realm, 'builder', have - want);
 }
 
 /**
@@ -145,11 +171,12 @@ function employ(realm: Realm): Realm {
   return realm;
 }
 
-/** One year of decisions, made at the start of the year. */
+/** One year of decisions, made at the start of the year. Soldiers are trained before builders are staffed. */
 export function decide(realm: Realm, rng: Rng): Realm {
   realm = slotTraits(realm);
   realm = buildUp(realm);
   realm = trainArmy(realm);
+  realm = staffBuilders(realm);
   realm = fight(realm, rng);
   return employ(slotTraits(realm));
 }
