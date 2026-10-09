@@ -74,6 +74,9 @@ import {
   buyTrait,
   pickOffer,
   possibleChallenges,
+  challengeText,
+  milestoneProgress,
+  nextGoal,
   rollTrait,
   traitRng,
   type Building,
@@ -2558,5 +2561,134 @@ describe('trait sources (design §9)', () => {
     expect(a.chronicle.some((c) => c.text.startsWith('Challenge'))).toBe(true);
     expect(a).toEqual(run(77));
     expect(a.trader).not.toEqual(run(78).trader);
+  });
+});
+
+describe('Goals panel (design §9)', () => {
+  const start = (): Realm => atPeace(createRealm(9));
+
+  it('lists every milestone with its count against the target', () => {
+    const realm = { ...start(), battlesWon: 4, storehouse: 1, raidsRepelled: 2 };
+    expect(milestoneProgress(realm)).toEqual([
+      {
+        milestone: 'people',
+        goal: '50 people',
+        count: population(realm),
+        target: 50,
+        reached: false,
+      },
+      { milestone: 'battles', goal: 'win 10 battles', count: 4, target: 10, reached: false },
+      { milestone: 'storehouse', goal: 'Storehouse level 3', count: 1, target: 3, reached: false },
+      { milestone: 'raids', goal: 'repel 5 raids', count: 2, target: 5, reached: false },
+    ]);
+    expect(milestoneProgress(realm).map((p) => p.milestone)).toEqual([...MILESTONES]);
+  });
+
+  it('counts the whole population toward 50 people', () => {
+    const realm = {
+      ...start(),
+      idle: 10,
+      jobs: { farmer: 20, woodcutter: 5, miner: 2 },
+      soldiers: 0,
+    };
+    expect(milestoneProgress(realm)[0]!.count).toBe(37);
+  });
+
+  it('marks paid-out milestones reached, even if the count drops later', () => {
+    const realm = { ...start(), milestones: ['people' as const], idle: 0 };
+    const people = milestoneProgress(realm)[0]!;
+    expect(people.count).toBeLessThan(people.target);
+    expect(people.reached).toBe(true);
+  });
+
+  it('agrees with the payout: a reached milestone shows reached after the tick', () => {
+    const reached = tick({ ...start(), battlesWon: 10 }, 0.25);
+    expect(milestoneProgress(reached)[1]).toMatchObject({ count: 10, reached: true });
+  });
+
+  it('caps counts at the target and trims bad values', () => {
+    const realm = { ...start(), battlesWon: 25, raidsRepelled: -3, storehouse: 1.7 };
+    const [, battles, storehouse, raids] = milestoneProgress(realm);
+    expect(battles!.count).toBe(10);
+    expect(storehouse!.count).toBe(1);
+    expect(raids!.count).toBe(0);
+  });
+
+  describe('Next hint', () => {
+    it('names the first open milestone with its progress', () => {
+      const realm = start();
+      expect(nextGoal(realm)).toBe(`Next: 50 people (${population(realm)} / 50).`);
+    });
+
+    it('skips reached milestones', () => {
+      const realm = {
+        ...start(),
+        milestones: ['people' as const, 'battles' as const],
+        storehouse: 2,
+      };
+      expect(nextGoal(realm)).toBe('Next: Storehouse level 3 (2 / 3).');
+    });
+
+    it('always shows something while any milestone remains', () => {
+      for (let i = 0; i < MILESTONES.length; i++) {
+        const realm = { ...start(), milestones: MILESTONES.slice(0, i) };
+        expect(nextGoal(realm)).toMatch(/^Next: .+ \(\d+ \/ \d+\)\.$/);
+      }
+    });
+
+    it('says so once every milestone is reached', () => {
+      expect(nextGoal({ ...start(), milestones: [...MILESTONES] })).toBe(
+        'Every milestone reached.',
+      );
+    });
+  });
+
+  describe('challenge line', () => {
+    it('shows when the next challenge comes while none is active', () => {
+      const realm = start();
+      expect(challengeText(realm)).toBe(
+        `None active. The next comes in year ${realm.challengeYear}.`,
+      );
+    });
+
+    it('explains what is missing once its year has come', () => {
+      const realm = { ...start(), year: 20, challengeYear: 16 };
+      expect(challengeText(realm)).toMatch(/^None active\. One comes once you can store 500 food/);
+    });
+
+    it('shows food progress and years left', () => {
+      const realm: Realm = {
+        ...start(),
+        year: 17,
+        stores: { ...start().stores, food: 320.9 },
+        challenge: { kind: 'food', deadline: 19 },
+      };
+      expect(challengeText(realm)).toBe(
+        'Stockpile 500 food by year 19: 320 / 500 food, 2 years left. Failing costs nothing.',
+      );
+    });
+
+    it('shows years left for the raid challenge, singular for one', () => {
+      const realm: Realm = { ...start(), year: 24, challenge: { kind: 'raid', deadline: 25 } };
+      expect(challengeText(realm)).toBe(
+        'Repel the next raid by year 25: 1 year left. Failing costs nothing.',
+      );
+    });
+
+    it('matches the challenge the realm actually offered', () => {
+      let realm: Realm = {
+        ...start(),
+        storehouse: 3,
+        year: CHALLENGE.every,
+        time: CHALLENGE.every * YEAR_SECONDS - 0.1,
+      };
+      realm = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: false })) };
+      realm = tick(realm, 0.25);
+      const c = realm.challenge!;
+      expect(c).not.toBeNull();
+      expect(challengeText(realm)).toContain(`by year ${c.deadline}:`);
+      const left = c.deadline - realm.year;
+      expect(challengeText(realm)).toContain(`${left} ${left === 1 ? 'year' : 'years'} left`);
+    });
   });
 });

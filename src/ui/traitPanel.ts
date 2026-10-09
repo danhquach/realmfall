@@ -1,6 +1,4 @@
 import {
-  CHALLENGE,
-  CHALLENGE_INFO,
   TIER_INFO,
   TRADER,
   TRAIT_INFO,
@@ -8,6 +6,7 @@ import {
   TRAITS,
   buyTrait,
   canAfford,
+  challengeText,
   pickOffer,
   sellDuplicate,
   slotTrait,
@@ -220,16 +219,7 @@ export function mountTraitPanel(panels: HTMLElement, act: Act): (realm: Realm) =
       shownOffers = realm.offers;
     }
 
-    const c = realm.challenge;
-    const goal = c ? CHALLENGE_INFO[c.kind].goal : '';
-    setText(
-      challengeLine,
-      c
-        ? `${goal[0]!.toUpperCase()}${goal.slice(1)} by year ${c.deadline}. Failing costs nothing.`
-        : realm.year < realm.challengeYear
-          ? `None active. The next comes in year ${realm.challengeYear}.`
-          : `None active. One comes once you can store ${CHALLENGE.food} food but hold less, or a rival is hostile.`,
-    );
+    setText(challengeLine, challengeText(realm));
 
     if (realm.buildings.market === 0) setText(traderNote, 'Opens once you have a Market.');
     else setText(traderNote, `Restocks in year ${realm.traderYear + TRADER.every}.`);

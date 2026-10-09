@@ -647,6 +647,26 @@ Slots and the level cap bound the total: at most three traits, each at most
 - Every gain, offer, pick, purchase, challenge result, slot, swap, upgrade and
   sale is written to the Chronicle.
 
+### Goals panel
+
+The first panel, so the player always sees what to work towards. Text only;
+it adds no mechanics and updates as the realm changes.
+
+- **Next:** the first milestone not yet reached, in table order, with its
+  progress: "Next: 50 people (37 / 50)." Once every milestone is reached:
+  "Every milestone reached." When building requirements land (§5), the first
+  locked building's requirement comes first ("Next: reach 15 people to unlock
+  the Barracks").
+- **Milestones:** one line each, in table order: "50 people: 37 / 50",
+  "win 10 battles: 4 / 10", "Storehouse level 3: 1 / 3", "repel 5 raids: 2 / 5".
+  The count is capped at the target. A milestone already paid out shows
+  "✓ reached", even if its count later drops.
+- **Challenge:** the same line as the Traits panel. Active: "Stockpile 500 food
+  by year 19: 320 / 500 food, 2 years left. Failing costs nothing." (the raid
+  challenge has no count: "Repel the next raid by year 25: 1 year left. …").
+  None active: "None active. The next comes in year 31.", or, once that year
+  has come and none can be offered, what it still needs.
+
 ## 10. Time
 
 - **Year:** 8 s of game time. Yearly effects (rival growth) apply once per

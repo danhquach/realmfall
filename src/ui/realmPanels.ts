@@ -31,6 +31,7 @@ import {
 } from '../core/realm.ts';
 import type { Rng } from '../core/rng.ts';
 import { button, el, panel, setEnabled, setText, setTraitText } from './dom.ts';
+import { mountGoalsPanel } from './goalsPanel.ts';
 import { mountTraitPanel } from './traitPanel.ts';
 
 /** Applies a player action: the caller swaps in the returned realm and redraws. */
@@ -75,7 +76,7 @@ interface RivalRow {
 }
 
 /**
- * Builds the header, Stores, People, Buildings, Army, Rivals and Traits panels inside
+ * Builds the header, Goals, Stores, People, Buildings, Army, Rivals and Traits panels inside
  * `root` once, and returns the function that refreshes them from a realm.
  * Controls are created once and kept, so keyboard focus survives the per-frame
  * redraw. `battleRng` rolls the battles the player starts.
@@ -194,10 +195,12 @@ export function mountRealmPanels(
   const panels = el('div', 'panels');
   panels.append(stores, people, buildings, army, rivals);
   const renderTraits = mountTraitPanel(panels, act);
+  const renderGoals = mountGoalsPanel(panels);
   root.append(header, panels);
 
   return (realm) => {
     renderTraits(realm);
+    renderGoals(realm);
     setText(title, realm.name);
     setText(subtitle, `Year ${realm.year}`);
 
