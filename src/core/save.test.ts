@@ -3,6 +3,9 @@ import { advance } from './loop.ts';
 import {
   CHRONICLE_MAX,
   RIVAL,
+  RIVAL_LEVEL_INFO,
+  ringPower,
+  type Rival,
   assign,
   attack,
   cancelOrder,
@@ -487,6 +490,37 @@ describe('construction queue in a save', () => {
 });
 
 describe('weapons, levels and build counts in a save', () => {
+  it('rejects weapons past the amount limit', () => {
+    expect(parse(corrupt(['stores', 'weapons'], SAVE_LIMITS.amount * 10))).toBeNull();
+  });
+
+  it('plays a save with every count and level at its limit without freezing', () => {
+    const save = saved();
+    const b = save.realm.buildings as Record<string, number>;
+    Object.assign(b, {
+      hut: SAVE_LIMITS.count,
+      market: SAVE_LIMITS.count,
+      forge: SAVE_LIMITS.count,
+    });
+    Object.assign(b, { hutLevel: 5, marketLevel: 5, forgeLevel: 5 });
+    const loaded = parse(JSON.stringify(save))!;
+    expect(loaded).not.toBeNull();
+    const later = advance(loaded, 600).realm;
+    expect(Object.values(later.stores).every(Number.isFinite)).toBe(true);
+    expect(parse(serialize(later))).toEqual(later);
+  });
+
+  it('accepts a rival at ceiling 0 with power 0, not above it', () => {
+    const zero = (power: number) => {
+      const save = saved();
+      const r = (save.realm.rivals as Record<string, unknown>[])[0]!;
+      Object.assign(r, { ceiling: 0, power });
+      return parse(JSON.stringify(save));
+    };
+    expect(zero(0)).not.toBeNull();
+    expect(zero(0.1)).toBeNull();
+  });
+
   const orderAt = (fields: Record<string, unknown>) => ({
     building: 'hut',
     count: 1,
@@ -771,14 +805,24 @@ describe('a loaded realm runs', () => {
 });
 
 describe('late game', () => {
-  it('holds rival power at the cap through battles', () => {
+  /** The strongest rival a save can hold: Elite on the farthest ring, at its ceiling. */
+  const top = (base: Rival): Rival => {
+    const ceiling = ringPower(SAVE_LIMITS.ring, 'elite') * RIVAL_LEVEL_INFO.elite.ceiling;
+    return { ...base, ring: SAVE_LIMITS.ring, level: 'elite', power: ceiling, ceiling };
+  };
+
+  it('holds the strongest rival at its ceiling through battles, and still saves', () => {
     let realm = played();
-    const top = { ...realm.rivals[0]!, power: RIVAL.maxPower, ceiling: RIVAL.maxPower };
-    realm = { ...realm, soldiers: 1, rivals: [top, ...realm.rivals.slice(1)] };
+    const max = top(realm.rivals[0]!);
+    realm = { ...realm, soldiers: 1, rivals: [max, ...realm.rivals.slice(1)] };
     const lost = attack(realm, 0, () => 0.99);
-    expect(lost.rivals[0]!.power).toBe(RIVAL.maxPower);
-    const far = { ...top, power: 1e9, ring: SAVE_LIMITS.ring };
-    const won = attack({ ...realm, soldiers: 1e9, rivals: [far, top] }, 0, () => 0);
+    expect(lost.rivals[0]!.power).toBe(max.ceiling);
+    expect(parse(serialize(lost))).toEqual(lost);
+    const won = attack(
+      { ...realm, soldiers: 1e9, rivals: [{ ...max, power: 1e9 }, max] },
+      0,
+      () => 0,
+    );
     const fresh = won.rivals.at(-1)!;
     expect(fresh.ring).toBe(SAVE_LIMITS.ring);
     expect(Number.isFinite(fresh.ceiling)).toBe(true);
@@ -786,17 +830,22 @@ describe('late game', () => {
     expect(parse(serialize(won))).toEqual(won);
   });
 
-  it('holds rival power at the cap, so a very old realm still saves', () => {
+  it('rejects a ceiling past its level over a rival of its ring', () => {
+    const r = played().rivals[0]!;
+    const most = ringPower(r.ring, r.level) * RIVAL_LEVEL_INFO[r.level].ceiling;
+    expect(parse(corrupt(['rivals', 0, 'ceiling'], most))).not.toBeNull();
+    expect(parse(corrupt(['rivals', 0, 'ceiling'], most * 1.01))).toBeNull();
+    expect(parse(corrupt(['rivals', 0, 'ceiling'], RIVAL.maxPower))).toBeNull();
+  });
+
+  it('keeps a very old realm at its ceilings and saving after 8 hours away', () => {
     const save = saved();
-    const rivals = (save.realm.rivals as object[]).map((r) => ({
-      ...r,
-      power: 1e299,
-      ceiling: RIVAL.maxPower,
-    }));
+    const rivals = (save.realm.rivals as Rival[]).map((r) => top(r));
     Object.assign(save.realm, { time: 25_000 * 8, year: 25_001, rivals });
     const old = parse(JSON.stringify(save))!;
+    expect(old).not.toBeNull();
     const later = advance(old, 8 * 60 * 60).realm;
-    expect(later.rivals.every((r) => r.power === RIVAL.maxPower)).toBe(true);
+    expect(later.rivals.every((r) => r.power === r.ceiling)).toBe(true);
     expect(parse(serialize(later))).toEqual(later);
   });
 });

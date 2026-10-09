@@ -275,7 +275,7 @@ export function mountRealmPanels(layout: Layout, act: Act, battleRng: Rng): (rea
       else if (levelled) setText(btn, `Upgrade to level ${have + queued(realm, c) + 1} (${price})`);
       else if (row.picker) setText(btn, `Build ${count} (${price})`);
       else setText(btn, `Build (${price})`);
-      setLabel(btn, `${btn.textContent} ${name}`);
+      setLabel(btn, `${name}: ${btn.textContent}`);
       setEnabled(btn, canOrder(realm, c, count));
       if (row.picker) {
         setText(row.picker.shown, `×${count}`);

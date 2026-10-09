@@ -286,7 +286,9 @@ up to the number of soldiers. An armed soldier fights at × (1 + 0.5 × Forges
 level): × 1.5 at level 1, × 3.5 at level 5. Soldiers who fall in battle lose
 their weapons (their share of the armed ones); a disbanded or deserting
 soldier leaves the weapon in store. A Forge makes one weapon every 5 s from 2
-iron, and stops while iron runs out or the weapons store is full.
+iron, and stops while iron runs out or the weapons store is full. Forges keep
+working until the store is full even when every soldier is armed, so spare
+weapons wait for new recruits; the iron in them is spent.
 
 **Army power** = Σ effective power of every field unit, × the weapon bonus for
 each armed one, × its slotted trait modifiers (§9). Units in garrisons don't

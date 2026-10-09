@@ -6,6 +6,8 @@ import {
   CHALLENGES,
   RIVAL,
   RIVAL_LEVELS,
+  RIVAL_LEVEL_INFO,
+  ringPower,
   CHRONICLE_KINDS,
   CHRONICLE_MAX,
   CONSTRUCTION_INFO,
@@ -150,11 +152,15 @@ function record<K extends string, V>(v: unknown, keys: readonly K[], read: (v: u
 /** A rival; its power may not be past its ceiling (§7). */
 function rival(v: unknown): Rival {
   const o = obj(v);
-  const ceiling = num(own(o, 'ceiling'), 0, RIVAL.maxPower);
+  const ring = int(own(o, 'ring'), 1, SAVE_LIMITS.ring);
+  const level = oneOf(own(o, 'level'), RIVAL_LEVELS);
+  // No higher than its level's ceiling over a rival of its ring (starting rivals sit below).
+  const most = ringPower(ring, level) * RIVAL_LEVEL_INFO[level].ceiling * (1 + 1e-9);
+  const ceiling = num(own(o, 'ceiling'), 0, Math.min(most, RIVAL.maxPower));
   return {
     name: text(own(o, 'name'), NAME, SAVE_LIMITS.nameChars),
-    ring: int(own(o, 'ring'), 1, SAVE_LIMITS.ring),
-    level: oneOf(own(o, 'level'), RIVAL_LEVELS),
+    ring,
+    level,
     trait: oneOf(own(o, 'trait'), TRAITS),
     power: num(own(o, 'power'), 0, ceiling),
     ceiling,

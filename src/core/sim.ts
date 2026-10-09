@@ -115,7 +115,8 @@ function buildUp(realm: Realm): Realm {
   const { soldiers, buildings } = realm;
   if (soldiers >= STRATEGY.forgeAfter && buildings.forge * STRATEGY.soldiersPerForge < soldiers)
     realm = once('forge');
-  if (buildings.forge > 0 && armedSoldiers(realm) === soldiers) realm = once('forgeLevel');
+  if (buildings.forge > 0 && soldiers > 0 && armedSoldiers(realm) === soldiers)
+    realm = once('forgeLevel');
   if (buildings.hut >= STRATEGY.upgradeAfter) realm = once('hutLevel');
   if (buildings.market >= STRATEGY.upgradeAfter) realm = once('marketLevel');
   const caps = storeCaps(realm);
