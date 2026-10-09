@@ -284,7 +284,7 @@ learned about it (see Scouting).
 
 - **Stores and people** follow its power E: full stores are 3E food, 2E wood,
   E/2 iron and E gold, and it has ⌊E / 8⌋ people. Stores start full. Plundered
-  stores refill by 10% of the current full value every year, up to full.
+  stores refill by 2% of the current full value every year, up to full.
 
 - Starting rivals: a Weak rival of power 20, an Average one of 45 and a Strong
   one of 90, placed in the first two rings of the map.
@@ -414,6 +414,8 @@ garrisons and bandits. At a rival capital, E is multiplied by its wall bonus
 - **Plunder win:** lose ⌈soldiers × (0.05 + 0.15 × (1 − win chance))⌉
   soldiers and take loot up to the army's carry capacity (§6). The rival keeps
   its capital, power and sites, loses the stores taken, and turns hostile.
+  Plundering the same rival again within 20 years of the last plunder takes
+  only half as much loot.
 - **Loss:** lose ⌈50%⌉ of soldiers. The rival gains +10% power and turns hostile.
 
 ### Raids
@@ -421,9 +423,18 @@ garrisons and bandits. At a rival capital, E is multiplied by its wall bonus
 Every 45 s a random hostile rival raids with strength E × (0.4–0.8). It targets
 your weakest garrisoned site next to its land, or your capital if none is.
 
+- **Grace period:** there are no raids until year 10 and your first Barracks
+  is built, whichever comes later, and never past year 30, so skipping the
+  Barracks doesn't buy peace.
+- **Until your first conquest,** a raid's strength is at most
+  max(1.5 × your field army power, 10), so an early realm faces raids it can
+  answer. An empty army still loses to them.
+
 - **Raid on the capital:** if field army power × (1 + 0.2 × your wall level)
-  ≥ raid strength, the raid is repelled. Otherwise you lose 25% of the food
-  and wood above the Storehouse's safe amount (§5).
+  ≥ raid strength, the raid is repelled. Otherwise the raiders take 25% of the
+  food and wood above the Storehouse's safe amount (§5), but no more than they
+  can carry: raid strength × 10 in total, split between food and wood in
+  proportion to what's exposed.
 - **Raid on a site:** if the garrison's power ≥ raid strength, it holds.
   Otherwise the garrison is lost and the rival takes the site.
 
@@ -466,7 +477,10 @@ from the start, but what's inside is known only from scouting (§7).
   road with your territory.
 - **Unclaimed site:** claim it by stationing a garrison of at least 2 soldiers.
 - **Bandits:** some unclaimed sites are guarded by bandits (a power value).
-  Clear them with a battle first, then station a garrison.
+  Clear them with a battle first, then station a garrison. A bandit camp holds
+  loot worth 2× its power in total (40% food, 30% wood, 10% iron, 20% gold,
+  rounded down), taken up to the army's carry capacity (§6). Cleared camps
+  don't come back, so they are the early practice target.
 - **Rival-held site:** attack its garrison (battle, §7). If you win, the site is
   yours and you must station a garrison.
 - **Garrisons cost you.** Garrisoned soldiers still eat and get paid but don't
@@ -622,7 +636,7 @@ Slots and the level cap bound the total: at most three traits, each at most
 - **Challenges:** the first can come in year 16, and each later one 15 years
   after the last ended. Only a challenge that can be met is offered: stockpile
   500 food in 3 years needs a food cap of 500 or more and less than 500 in store, and repel the next raid
-  (6 years) needs a hostile rival. Claim a site in 4 years joins them once
+  (6 years) needs a hostile rival and the raid grace period (§7) to be over. Claim a site in 4 years joins them once
   sites exist (§8). The raid challenge ends with the next raid on the capital:
   repelled meets it, anything else fails it.
 - **Offers** wait until the player picks. At most 10 are kept; past that the
@@ -691,8 +705,9 @@ lines stay in the Chronicle and count toward its 200-line cap.
    balance runner: new building costs, build work and requirements, train
    times, wall bonus, carry capacities and wagon speed (§5, §6); rival level
    odds, power factors, wall and tower ranges, stores, people and refill rate,
-   scout costs, fail chances and fact thresholds, and the Plunder loss formula
-   (§7). Builders also take peasants from paid jobs, which adds to the army's
+   scout costs, fail chances and fact thresholds, the Plunder loss formula
+   and repeat penalty, the raid grace period and caps, and bandit loot (§7,
+   §8). Builders also take peasants from paid jobs, which adds to the army's
    gold squeeze (#78).
 8. **Early attacks are blind.** The win chance needs exact power and unit mix
    (scout level 3, so Defence tower 2), so the first attacks are made without
