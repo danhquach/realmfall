@@ -40,10 +40,10 @@ stronger rings, endlessly.
 
 | Resource | Produced by | Consumed by |
 |---|---|---|
-| Food | Farmers (1.5/s each), Fertile plains | Every civilian (0.5/s), every soldier (1/s; cavalry 1.5/s) |
-| Wood | Woodcutters (0.8/s each), Forests | Buildings, archers |
-| Iron | Miners (0.4/s each), Iron mines | Spearmen, cavalry, Forge |
-| Gold | Tax (0.25/s per employed worker), Markets (+1/s each), Gold veins, loot | Soldier upkeep (0.5/s each; cavalry 1/s), training soldiers, buildings, scouting, tribute |
+| Food | Farmers (1.5/s each), Fertile plains, loot | Every civilian (0.5/s), every soldier (1/s; cavalry 1.5/s), wagons (0.5/s) |
+| Wood | Woodcutters (0.8/s each), Forests, loot | Buildings, archers, wagons |
+| Iron | Miners (0.4/s each), Iron mines, loot | Spearmen, cavalry, Forge, Wall |
+| Gold | Tax (0.25/s per employed worker), Markets (+1/s each), Gold veins, loot | Soldier upkeep (0.5/s each; cavalry 1/s; wagons 0.25/s), training units, buildings, scouting, tribute |
 
 Every store has a cap set by the Storehouse level (§5). A store stops filling at
 its cap and anything over it is lost, whatever the source (production, loot,
@@ -55,11 +55,11 @@ Storehouse is upgraded.
 | | |
 |---|---|
 | Stores | 80 food, 40 wood, 10 iron, 40 gold |
-| People | 4 idle, 4 farmers, 2 woodcutters, 0 miners, 0 soldiers |
+| People | 3 idle, 4 farmers, 2 woodcutters, 0 miners, 1 builder, 0 soldiers |
 | Housing cap | 15 |
 | Store caps | 200 food, 200 wood, 50 iron, 150 gold (Storehouse level 0) |
 | Realm | Hearthmoor |
-| Map | Your capital only, nearby places visible |
+| Map | Your capital only, nearby places and every rival capital visible |
 
 The opening food balance is +1.0/s on purpose: the first decision is how many
 more farmers you need before anything else.
@@ -67,8 +67,8 @@ more farmers you need before anything else.
 ## 4. People
 
 - **Growth:** +1 idle peasant every 4 s while food > 5 and population < cap.
-- **Jobs:** idle peasants are assigned to Farmer, Woodcutter or Miner and can be
-  moved back at any time. Idle peasants eat but pay no tax.
+- **Jobs:** idle peasants are assigned to Farmer, Woodcutter, Miner or Builder
+  (§5) and can be moved back at any time. Idle peasants eat but pay no tax.
 - **Starvation:** see below.
 - **Housing cap:** raised by Huts (+5) and conquest (+10). Soldiers live in
   the same housing as everyone else; training one moves a peasant into the army
@@ -85,22 +85,64 @@ it empties.
 - **People leave:** hunger builds at s per second; each 4 points of hunger, one
   person leaves. At s = 1 (no food at all) that is one person every 4 s; at
   s = 0.1, one every 40 s. Hunger resets to 0 once food is above 0 again.
-- **Who leaves first:** idle peasants, then miners, woodcutters and farmers (in
-  that order, so farmers stay longest), then soldiers.
-- **Penalty:** while s > 0, wood, iron and tax are multiplied by (1 − s), and
+- **Who leaves first:** idle peasants, then builders, miners, woodcutters and
+  farmers (in that order, so farmers stay longest), then recruits in training
+  (§6), then soldiers and wagons. A recruit who leaves takes their paid train
+  cost with them.
+- **Penalty:** while s > 0, wood, iron, tax and build work are multiplied by (1 − s), and
   the realm does not grow. Food output is not reduced, so starvation can't feed
   on itself.
 
 ## 5. Buildings
 
-Each building's cost grows with how many you already own (n = number built),
-rounded up to a whole number.
+Each building's cost and build work grow with how many you already own
+(n = number built plus number already queued), rounded up to a whole number.
+Buildings with a level (Storehouse, Wall, Defence tower) are built once and then
+upgraded; for them n is the level being ordered, minus 1, and each level can be
+queued only after the one below it is built or queued.
 
-| Building | Cost | Effect |
-|---|---|---|
-| Hut | 25 × 1.3ⁿ wood | +5 housing |
-| Market | 40 × 1.5ⁿ wood, 30 × 1.5ⁿ gold | +1 gold/s |
-| Forge | 60 × 2ⁿ wood, 20 × 2ⁿ iron | +50% army power |
+| Building | Cost | Build work | Needs | Effect |
+|---|---|---|---|---|
+| Hut | 25 × 1.3ⁿ wood | 20 × 1.2ⁿ | — | +5 housing |
+| Market | 40 × 1.5ⁿ wood, 30 × 1.5ⁿ gold | 40 × 1.2ⁿ | Storehouse level 1 | +1 gold/s |
+| Barracks | 50 wood, 20 gold | 40 | 15 people | Trains Spearmen (§6) |
+| Archery range | 60 wood, 30 gold | 50 | Barracks | Trains Archers |
+| Stable | 80 wood, 10 iron, 40 gold | 60 | Barracks, a Horse pasture held (§8) | Trains Cavalry |
+| Forge | 60 × 2ⁿ wood, 20 × 2ⁿ iron | 60 × 1.2ⁿ | Barracks | +50% army power |
+| Wall (levels 1–5) | 50 × 2ⁿ wood, 15 × 2ⁿ iron | 40 × 2ⁿ | Barracks | Capital defence +20% per level (§7) |
+| Defence tower (levels 1–3) | 40 × 2ⁿ wood, 20 × 2ⁿ gold | 40 × 2ⁿ | Wall level 1 | Each level allows one more scout level (§7) |
+
+Barracks, Archery range and Stable are built once each.
+
+### Builders and construction
+
+Nothing is built instantly. Builders do the work.
+
+- **Builders** are peasants given the Builder job (§4). Like any worker they
+  pay tax and can be moved back at any time.
+- **Ordering:** the cost is paid when you order a building, and the order joins
+  the construction queue (up to 5 orders). The cost and build work are fixed at
+  that moment.
+- **Build work** is measured in builder-seconds. All builders work on the first
+  order in the queue, so it advances by (number of builders) per second. A Hut
+  (20) takes 20 s with one builder and 5 s with four.
+- **Done:** when its work is complete the building takes effect and the next
+  order starts.
+- **No builders:** the queue waits.
+- **Cancel:** any order can be cancelled; the refund is exactly what was paid.
+  A refund over the store cap is lost (§3). Cancelling a level also cancels any
+  higher level of the same building queued after it.
+- **Requirements** are checked when you order and must be built, not just
+  queued. "People" counts the whole population: workers, idle, builders,
+  recruits and soldiers. Locked buildings stay in the
+  build list, greyed out, with what they still need ("Needs: Barracks"). A
+  building whose requirement is later lost keeps working, except the Stable
+  without a Horse pasture (§6).
+- **Stone quarry** (§8) lowers costs, not build work.
+
+The build panel shows the queue with each order's progress and time left at the
+current number of builders. Orders started, finished and cancelled go to the
+Chronicle.
 
 ### Storehouse
 
@@ -118,6 +160,9 @@ differ by resource because a realm needs far more wood than iron.
 Each level past 3 multiplies the previous level's caps, safe amounts and
 upgrade cost by 3.
 
+Each upgrade is a construction order with build work 30 × 2ⁿ (30, 60, 120…).
+The new caps apply when it is done.
+
 The safe amount is a number, not a percentage: at level 1 with 120 food, 50 is
 safe and a raid can only take from the other 70. Holding less than the safe
 amount means all of it is safe.
@@ -132,14 +177,73 @@ Three unit types counter each other in a cycle:
 Spearmen ──beat──► Cavalry ──beat──► Archers ──beat──► Spearmen
 ```
 
-| Unit | Train cost | Upkeep | Base power | Special |
-|---|---|---|---|---|
-| Spearmen | 1 peasant, 5 iron, 10 gold | 1 food/s, 0.5 gold/s | 2 | — |
-| Archers | 1 peasant, 8 wood, 10 gold | 1 food/s, 0.5 gold/s | 2 | +25% when defending (capital or garrison) |
-| Cavalry | 1 peasant, 5 iron, 20 gold | 1.5 food/s, 1 gold/s | 3 | Needs a Horse pasture (§8); all-cavalry armies march faster |
+| Unit | Trained at | Train cost | Upkeep | Base power | Carry | Special |
+|---|---|---|---|---|---|---|
+| Spearmen | Barracks | 1 peasant, 5 iron, 10 gold | 1 food/s, 0.5 gold/s | 2 | 10 | — |
+| Archers | Archery range | 1 peasant, 8 wood, 10 gold | 1 food/s, 0.5 gold/s | 2 | 10 | +25% when defending (capital or garrison) |
+| Cavalry | Stable | 1 peasant, 5 iron, 20 gold | 1.5 food/s, 1 gold/s | 3 | 25 | Needs a Horse pasture (§8); all-cavalry armies march faster |
+| Wagon | Barracks | 1 peasant, 30 wood, 10 gold | 0.5 food/s, 0.25 gold/s | 0 | 100 | Doesn't fight; slows the march (§8) |
 
 Each type costs a different resource, so the counter you want depends on what
-your economy produces. Cavalry is the strongest but needs held land to train.
+your economy produces. A unit type can't be trained until its building is done
+(§5), so the army grows in steps: Spearmen first, then Archers, then Cavalry,
+which also needs held land.
+
+### Training
+
+Training takes time.
+
+| Unit | Train time |
+|---|---|
+| Spearmen | 5 s |
+| Archers | 6 s |
+| Cavalry | 10 s |
+| Wagon | 8 s |
+
+- **Ordering:** the train cost is paid and an idle peasant is taken when you
+  order a unit. Each building has its own training queue (up to 10 units) and
+  trains one unit at a time, so a Barracks and an Archery range train in
+  parallel.
+- **In training:** a recruit eats like a soldier but doesn't fight, pay tax or
+  draw upkeep until it's done.
+- **Cancel:** any queued unit can be cancelled for a full refund; the recruit
+  goes back to idle.
+- **Stable and pastures:** each held Horse pasture supports 10 cavalry (§8).
+  Cavalry (existing plus queued) can't be ordered past that cap, and while you hold no pasture or are
+  over the cap, the Stable's queue pauses (paid costs stay paid). Cavalry you
+  already have stays.
+- Recruits don't desert (§6 Rules): they draw no upkeep yet.
+- Finished units join the field army. Training isn't written to the Chronicle,
+  one line per unit would drown it.
+
+### Carrying loot
+
+When you send an attack you choose how many of each unit type march, wagons
+included; the rest stays home. The marching army's **carry capacity** is the
+sum of each unit's Carry above.
+
+- **Loot** from a won battle against a rival capital (Attack or Plunder, §7) is
+  the rival's stores, up to the army's capacity. When the stores are bigger
+  than the capacity, each resource is taken in proportion to how much of it the
+  rival holds; the rest is left behind.
+- Only units that survive the battle carry: capacity is counted after losses.
+  Soldier losses are spread across soldier types (not wagons) in proportion to
+  how many of each marched. Loot reaches your stores when the army gets home, and store
+  caps apply then (§3).
+- **Wagons** carry the most but have no power: they count toward the army's
+  size (and so its march time) and make it slower (§8), and they can be lost
+  like soldiers. Wagons aren't soldiers in the battle-loss formulas (§7): a
+  won battle doesn't cost wagons, and a lost one loses ⌈50%⌉ of them along
+  with the soldiers.
+- Wagons can't be garrisoned and don't count toward a garrison's minimum (§8);
+  they stay in the field army.
+- Wagons stay out of the counter maths (§6 Counters) and the win chance: an
+  army of only wagons can't attack.
+
+Example: 20 Spearmen (200) and 2 Wagons (200) can bring home 400. Against a
+rival holding 600 food, 400 wood, 100 iron and 200 gold (1,300 in all), they
+take 400 / 1,300 ≈ 31% of each, rounded down: 184 food, 123 wood, 30 iron and
+61 gold.
 
 ### Counters
 
@@ -159,8 +263,8 @@ cavalry at 60 × 0.67 = 40, so you win 69% of the time.
 
 ### Rules
 
-- **Scouting reveals the mix.** A scouted rival shows how many of each unit it
-  has, so you can build the counter before you march.
+- **Scouting reveals the mix.** A rival's unit mix is a level 3 scouting fact
+  (§7), so you can build the counter before you march.
 - **Rival armies reflect their trait.** Horse lords field mostly cavalry, Poison
   archers mostly archers; others are mixed.
 - **Bandits** are mostly spearmen.
@@ -174,35 +278,144 @@ cavalry at 60 × 0.67 = 40, so you win 69% of the time.
 ### Generation
 
 Each rival is a settlement on the map (§8) with a place name (never a person's
-name), one trait (§9), a power value, a stance (hostile / at peace) and whether
-you've scouted it.
+name), a level, one trait (§9), a power value, an army, stores, people, a
+wall and a defence tower, a stance (hostile / at peace) and the facts you've
+learned about it (see Scouting).
 
-- Starting rivals: power 20, 45 and 90, placed in the first two rings of the map.
+- **Stores and people** follow its power E: full stores are 3E food, 2E wood,
+  E/2 iron and E gold, and it has ⌊E / 8⌋ people. Stores start full. Plundered
+  stores refill by 2% of the current full value every year, up to full.
+
+- Starting rivals: a Weak rival of power 20, an Average one of 45 and a Strong
+  one of 90, placed in the first two rings of the map.
 - Each rival has a 60% chance to start hostile.
-- Further rivals come from new map rings (§8), each ring 1.5× stronger than the
-  last. The supply of rivals is endless.
+- Further rivals come from new map rings (§8). Each new rival rolls its level
+  by its ring (table below), and its starting power is the ring's base power ×
+  its level factor (Weak 0.5, Average 1, Strong 2, Elite 3). Ring 1's base is
+  45, and each ring's base is 1.5× the last. The supply of rivals is endless.
 - Every rival gains +4% power per year.
+
+### Levels
+
+Rivals are not equal: each has a level, so you can pick a target your army can
+beat. The level sets the rival's defences. Growth rate and power ceiling per
+level are being tuned in #78.
+
+| Ring | Weak | Average | Strong | Elite |
+|---|---|---|---|---|
+| 1 | 60% | 40% | — | — |
+| 2 | 30% | 50% | 20% | — |
+| 3 | 10% | 40% | 35% | 15% |
+| 4+ | — | 25% | 45% | 30% |
+
+| Level | Wall | Defence tower |
+|---|---|---|
+| Weak | 0 | 0 |
+| Average | 0–1 | 0–1 |
+| Strong | 1–2 | 1–2 |
+| Elite | 2–3 | 2–3 |
+
+Wall and tower levels are rolled within the range when the rival is created,
+so two rivals of the same level can differ; only scouting tells them apart.
+
+A rival's wall works like yours (§5): +20% defence per level when you attack
+its capital, not its sites.
 
 ### Actions
 
-You can act on a rival once its settlement is next to your territory on the map.
+You can attack, plunder or pay tribute to a rival once its settlement is next
+to your territory on the map. You can scout any rival you can see. Attacking or
+plundering a rival at peace is allowed and turns it hostile.
 
 | Action | Cost | Effect |
 |---|---|---|
-| Scout | 15 gold | Reveals power, trait and your win chance |
+| Scout | 15 × 2^(scout level − 1) gold (15, 30, 60, 120) | Reveals facts about it, see below |
 | Tribute | 30 gold | A hostile rival becomes at peace (until an event changes it) |
-| Attack | — (risks the army) | Battle, see below |
+| Attack | — (risks the army) | Battle; a win annexes the rival, see below |
+| Plunder | — (risks the army) | Battle; a win takes loot but leaves the rival standing, see below |
+
+### Scouting
+
+Scouting is how you learn about a rival. You pick the scout level when you
+send the scout. Level 1 is always available; each Defence tower level (§5)
+allows one more, up to level 4.
+
+**Facts.** Everything about a rival is a fact, and each fact needs a minimum
+scout level. Deeper levels give the same subject in more detail; learning a
+more detailed fact replaces the rougher one and takes the rougher one out of
+the pool still to be revealed.
+
+| Subject | Level 1 | Level 2 | Level 3 | Level 4 |
+|---|---|---|---|---|
+| Level and trait | Level | Trait | | |
+| Power | | Range | Exact | |
+| Army | Size: small / medium / large | Exact count | Unit mix (§6) | |
+| Resources | Wealth: poor / modest / rich | Which stores it holds most of | Each store (range) | Each store, exact |
+| People | | | Range | Exact |
+| Defences | | Wall level | | Defence tower level |
+| Land | | Sites held | | |
+
+- **Army size:** small under 10 units, medium 10–29, large 30 or more.
+- **Wealth:** total stores against full (above): poor under 33%, modest
+  33–66%, rich over 66%.
+- **Which stores it holds most of:** the two largest.
+- **Ranges** are 50% of the true value wide, placed at a random offset (from
+  the run's seed) so the true value lies somewhere inside, not at the centre.
+
+**Each scout** at level L:
+
+- reveals 2 facts at random from those you don't know yet whose level is at
+  most L. Scouting again at the same level reveals more, but never anything
+  deeper than L; for that you need a higher level;
+- refreshes every fact you already know at level L or below to its current
+  value;
+- reveals nothing new once every fact up to L is known (refresh only).
+
+**Failure.** A rival's Defence tower is its scout counter. A scout fails with
+chance 20% × (rival's tower level − scout level + 1), and never below 0%. A
+Weak rival (tower 0) never stops a scout; against a tower of 3 a level 1 scout
+fails 60% of the time and a level 4 scout never does. A failed
+scout costs its gold, reveals and refreshes nothing, and turns the rival
+hostile. Before you send the scout, the fail chance is shown exactly once the
+rival's tower level is known, as a range once only its level is known
+(Levels), and as "?" before that.
+
+**Facts age.** Each fact shows the year it was learned ("year 42"). Rivals
+keep growing, so old numbers understate them.
+
+**Win chance** is shown once you know the rival's exact power, unit mix and
+wall level, computed from those facts against your army now. Otherwise it's
+"?".
+
+Every scout, successful or failed, is written to the Chronicle with what it
+revealed.
+
+### Rivals tab
+
+Rivals have their own tab. It lists every rival capital you can see on the
+map: its name, stance, how far it is, and every fact you know about it with
+the year it was learned. Unknown facts show as "?", so you can see at a glance
+what's left to learn and which scout level it needs. Each rival has its
+actions here: Scout (pick a level, with its cost and fail chance), Tribute,
+Attack and Plunder.
 
 ### Battle
 
 Win chance = P² / (P² + E²), where P is your army power and E the defender's
 power, both after counters (§6). Squaring the powers favours the stronger side: twice the enemy's power
 gives an 80% win chance. The same formula is used against rival capitals,
-garrisons and bandits.
+garrisons and bandits. At a rival capital, E is multiplied by its wall bonus
+(1 + 0.2 × wall level).
 
 - **Win against a capital:** lose ⌈soldiers × (0.1 + 0.3 × (1 − win chance))⌉
-  soldiers. Annex the rival: +10 housing, +⌊E / 8⌋ people, +E gold, its trait
-  (§9), and every site it held (§8).
+  soldiers. Annex the rival: +10 housing, its people, its trait (§9), every
+  site it held (§8), and as much of its stores as the army can carry (§6). The
+  rest is lost in the sack.
+- **Plunder win:** lose ⌈soldiers × (0.05 + 0.15 × (1 − win chance))⌉
+  soldiers and take loot up to the army's carry capacity (§6). The rival keeps
+  its capital, power and sites, loses the stores taken, and turns hostile.
+  Plundering the same rival again within 20 years of the last plunder takes
+  only half as much loot.
 - **Loss:** lose ⌈50%⌉ of soldiers. The rival gains +10% power and turns hostile.
 
 ### Raids
@@ -210,9 +423,18 @@ garrisons and bandits.
 Every 45 s a random hostile rival raids with strength E × (0.4–0.8). It targets
 your weakest garrisoned site next to its land, or your capital if none is.
 
-- **Raid on the capital:** if field army power ≥ raid strength, the raid is
-  repelled. Otherwise you lose 25% of the food and wood above the Storehouse's
-  safe amount (§5).
+- **Grace period:** there are no raids until year 10 and your first Barracks
+  is built, whichever comes later, and never past year 30, so skipping the
+  Barracks doesn't buy peace.
+- **Until your first conquest,** a raid's strength is at most
+  max(1.5 × your field army power, 10), so an early realm faces raids it can
+  answer. An empty army still loses to them.
+
+- **Raid on the capital:** if field army power × (1 + 0.2 × your wall level)
+  ≥ raid strength, the raid is repelled. Otherwise the raiders take 25% of the
+  food and wood above the Storehouse's safe amount (§5), but no more than they
+  can carry: raid strength × 10 in total, split between food and wood in
+  proportion to what's exposed.
 - **Raid on a site:** if the garrison's power ≥ raid strength, it holds.
   Otherwise the garrison is lost and the rival takes the site.
 
@@ -245,14 +467,20 @@ your starting capital are richer.
 
 You can see every place within one road of something you hold. Places further
 out show as "?" until you scout them (15 gold) or claim a neighbouring place.
+Scouting a place is separate from scouting a rival (§7).
+Rival capitals are the exception: every one is shown by name and owner colour
+from the start, but what's inside is known only from scouting (§7).
 
 ### Claiming and holding sites
 
-- **Adjacency:** you can only claim or attack places that share a road with
-  your territory.
+- **Adjacency:** you can only claim, attack or plunder places that share a
+  road with your territory.
 - **Unclaimed site:** claim it by stationing a garrison of at least 2 soldiers.
 - **Bandits:** some unclaimed sites are guarded by bandits (a power value).
-  Clear them with a battle first, then station a garrison.
+  Clear them with a battle first, then station a garrison. A bandit camp holds
+  loot worth 2× its power in total (40% food, 30% wood, 10% iron, 20% gold,
+  rounded down), taken up to the army's carry capacity (§6). Cleared camps
+  don't come back, so they are the early practice target.
 - **Rival-held site:** attack its garrison (battle, §7). If you win, the site is
   yours and you must station a garrison.
 - **Garrisons cost you.** Garrisoned soldiers still eat and get paid but don't
@@ -280,12 +508,16 @@ Roads between two places you hold count half: your own land has good roads and
 supply.
 
 **March time** = (shortest path length from capital to target) × army size
-factor × speed bonuses
+factor × speed bonuses × wagon factor
 
-- **Army size factor:** 1 + 0.1 per 20 field soldiers. Bigger armies are slower.
+- **Army size factor:** 1 + 0.1 per 20 marching units, wagons included. Bigger
+  armies are slower.
 - **Speed:** an army marches at the pace of its slowest unit. An all-cavalry
   army marches 40% faster. The Horse lords trait cuts another 25% (minimum 50%
   of base).
+- **Wagon factor:** 1.25 if any wagon marches, otherwise 1. It's applied
+  after the speed bonuses and their 50% floor, and an army with a wagon doesn't
+  count as all-cavalry. Bring wagons for the loot, not the speed.
 - **Return:** the army walks home the same way, taking the same time again.
 
 Example: Ashford → Gold vein (plain, 1) → Marsh of Veyl (marsh, 2) = 3 years.
@@ -296,9 +528,10 @@ With 30 mixed soldiers (factor 1.1): 3 × 1.1 ≈ 3.3 years there, 3.3 back. Wit
 
 - The army doesn't defend the capital, so raids on the capital face only the
   soldiers left at home.
-- Marching soldiers eat 1.5× food (supply lines).
+- Marching units eat 1.5× food (supply lines).
 - The target keeps growing (+4% power per year), so the win chance shown when
-  you send the army is projected to the arrival year.
+  you send the army (known only once scouting has revealed enough, §7) is
+  projected to the arrival year.
 - You can recall the army at any point. It turns back and takes as long to
   return as it has already marched.
 
@@ -315,8 +548,8 @@ beyond its resource bonus.
 ### Endless map
 
 The map grows in rings around your starting capital. When you hold a place on
-the outermost ring, a new ring is generated beyond it, with more rivals (power
-1.5× the previous ring) and richer sites.
+the outermost ring, a new ring is generated beyond it, with more rivals (ring
+base power 1.5× the previous ring, §7) and richer sites.
 
 ## 9. Traits
 
@@ -403,7 +636,7 @@ Slots and the level cap bound the total: at most three traits, each at most
 - **Challenges:** the first can come in year 16, and each later one 15 years
   after the last ended. Only a challenge that can be met is offered: stockpile
   500 food in 3 years needs a food cap of 500 or more and less than 500 in store, and repel the next raid
-  (6 years) needs a hostile rival. Claim a site in 4 years joins them once
+  (6 years) needs a hostile rival and the raid grace period (§7) to be over. Claim a site in 4 years joins them once
   sites exist (§8). The raid challenge ends with the next raid on the capital:
   repelled meets it, anything else fails it.
 - **Offers** wait until the player picks. At most 10 are kept; past that the
@@ -451,8 +684,8 @@ lines stay in the Chronicle and count toward its 200-line cap.
 | Events    | Random events (§11), except Change of heart                   |
 | Raids     | Raids on the capital, repelled or not                         |
 | Battles   | Battles won and lost                                          |
-| Rivals    | Scouting, tribute and Change of heart                         |
-| Buildings | Buildings raised and Storehouse upgrades                      |
+| Rivals    | Scouts (with what they revealed), failed scouts, tribute and Change of heart |
+| Buildings | Construction orders started, finished and cancelled           |
 | Traits    | Trait gains, duplicates, slots, swaps, upgrades and sales     |
 | Away      | The offline progress summary (§14)                            |
 
@@ -468,6 +701,17 @@ lines stay in the Chronicle and count toward its 200-line cap.
    Trait trader prices and swap costs (§9) soak up some gold, but not food.
 6. **The map is untested.** Garrison sizes, site yields, march time and rival
    expansion rate need a prototype before they can be trusted.
+7. **Construction, training and scouting are untested.** These need the
+   balance runner: new building costs, build work and requirements, train
+   times, wall bonus, carry capacities and wagon speed (§5, §6); rival level
+   odds, power factors, wall and tower ranges, stores, people and refill rate,
+   scout costs, fail chances and fact thresholds, the Plunder loss formula
+   and repeat penalty, the raid grace period and caps, and bandit loot (§7,
+   §8). Builders also take peasants from paid jobs, which adds to the army's
+   gold squeeze (#78).
+8. **Early attacks are blind.** The win chance needs exact power and unit mix
+   (scout level 3, so Defence tower 2), so the first attacks are made without
+   it. Intended, but worth checking in play.
 
 ## 14. Next systems
 
@@ -480,7 +724,9 @@ Ordered by how much they add to the endless loop:
    0.25 s steps as live play, so store caps, growth and hunger behave exactly
    as they would online, and write a Chronicle summary: time away, the change
    in each store, people and soldiers. Absences under a minute (a reload) are
-   replayed without a line.
+   replayed without a line. Construction and training (§5, §6) advance in the
+   same steps, and the summary lists the buildings finished and units trained
+   while away.
 2. **Bigger trait pool and trait synergies.** More traits per tier, and some
    pairs of slotted traits combine into a stronger effect (e.g. Dwarven smiths
    + Horse lords → Ironclad cavalry).
