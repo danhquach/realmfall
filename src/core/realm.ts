@@ -1,16 +1,33 @@
 import { chance, createRng, int, pick, type Rng } from './rng.ts';
 
-/** The four stores (docs/design.md §3). */
-export const RESOURCES = ['food', 'wood', 'iron', 'gold'] as const;
+/** The stores (docs/design.md §3); weapons are made by Forges (§5, §6). */
+export const RESOURCES = ['food', 'wood', 'iron', 'gold', 'weapons'] as const;
 export type Resource = (typeof RESOURCES)[number];
 
 /** Peasant jobs (docs/design.md §4); builders do the construction work of §5. */
 export const JOBS = ['farmer', 'woodcutter', 'miner', 'builder'] as const;
 export type Job = (typeof JOBS)[number];
 
-/** docs/design.md §5. Wall and Defence tower count levels, the others how many are built. */
-export const BUILDINGS = ['hut', 'market', 'barracks', 'forge', 'wall', 'tower'] as const;
+/**
+ * docs/design.md §5. Huts, Markets and Forges each have a level shared by all
+ * of that kind (from 1); Wall and Defence tower count levels; the others how
+ * many are built.
+ */
+export const BUILDINGS = [
+  'hut',
+  'hutLevel',
+  'market',
+  'marketLevel',
+  'barracks',
+  'forge',
+  'forgeLevel',
+  'wall',
+  'tower',
+] as const;
 export type Building = (typeof BUILDINGS)[number];
+
+/** The kind-wide levels of Huts, Markets and Forges, from 1 (§5). */
+export const UPGRADES = ['hutLevel', 'marketLevel', 'forgeLevel'] as const;
 
 /** What can be ordered: every building, and the next Storehouse level (§5). */
 export const CONSTRUCTIONS = [...BUILDINGS, 'storehouse'] as const;
@@ -19,6 +36,8 @@ export type Construction = (typeof CONSTRUCTIONS)[number];
 /** One order in the construction queue: its cost and build work are fixed when ordered (§5). */
 export interface Order {
   building: Construction;
+  /** How many it builds: 1 to BUILD_MAX for Huts, Markets and Forges, 1 for anything else. */
+  count: number;
   /** What was paid, refunded in full on cancel. */
   cost: Cost;
   /** Build work needed, in builder-seconds. */
@@ -191,8 +210,12 @@ export interface Rival {
   name: string;
   /** Map ring it sits on, from 1; sets which trait tiers it can hold (§9). */
   ring: number;
+  /** Sets its growth per year and power ceiling (§7 Levels). */
+  level: RivalLevel;
   trait: Trait;
   power: number;
+  /** Power never grows past this: starting power × its level's ceiling (§7). */
+  ceiling: number;
   hostile: boolean;
   scouted: boolean;
 }
@@ -297,14 +320,24 @@ export function createRealm(seed: number): Realm {
     name: 'Hearthmoor',
     time: 0,
     year: 1,
-    stores: { food: 80, wood: 40, iron: 10, gold: 40 },
+    stores: { food: 80, wood: 40, iron: 10, gold: 40, weapons: 0 },
     idle: 3,
     jobs: { farmer: 4, woodcutter: 2, miner: 0, builder: 1 },
     growth: 0,
     hunger: 0,
     soldiers: 0,
     desertion: 0,
-    buildings: { hut: 0, market: 0, barracks: 0, forge: 0, wall: 0, tower: 0 },
+    buildings: {
+      hut: 0,
+      hutLevel: 1,
+      market: 0,
+      marketLevel: 1,
+      barracks: 0,
+      forge: 0,
+      forgeLevel: 1,
+      wall: 0,
+      tower: 0,
+    },
     storehouse: 0,
     queue: [],
     annexedHousing: 0,
@@ -324,19 +357,66 @@ export function createRealm(seed: number): Realm {
   };
 }
 
+export const RIVAL_LEVELS = ['weak', 'average', 'strong', 'elite'] as const;
+export type RivalLevel = (typeof RIVAL_LEVELS)[number];
+
+interface RivalLevelInfo {
+  name: string;
+  /** Starting power = ring base × factor. */
+  factor: number;
+  /** Power ceiling = starting power × ceiling. */
+  ceiling: number;
+  /** Power gained per year, as a fraction, until the ceiling. */
+  growth: number;
+}
+
+/** The level table of docs/design.md §7. */
+export const RIVAL_LEVEL_INFO: Record<RivalLevel, RivalLevelInfo> = {
+  weak: { name: 'Weak', factor: 0.5, ceiling: 2, growth: 0.02 },
+  average: { name: 'Average', factor: 1, ceiling: 3, growth: 0.03 },
+  strong: { name: 'Strong', factor: 2, ceiling: 4, growth: 0.04 },
+  elite: { name: 'Elite', factor: 3, ceiling: 5, growth: 0.04 },
+};
+
 /** docs/design.md §7. */
 export const RIVAL = {
   startingPowers: [20, 45, 90],
+  startingLevels: ['weak', 'average', 'strong'],
   startingRings: [1, 1, 2],
   hostileChance: 0.6,
-  growthPerYear: 0.04,
+  /** Ring 1's base power; each ring's base is `ringScale` × the last. */
+  ringBase: 45,
+  ringScale: 1.5,
+  /** Level odds by ring, in RIVAL_LEVELS order; the last row holds for every ring past it. */
+  levelOdds: [
+    [0.6, 0.4, 0, 0],
+    [0.3, 0.5, 0.2, 0],
+    [0.1, 0.4, 0.35, 0.15],
+    [0, 0.25, 0.45, 0.3],
+  ],
   /** Power stops growing here, far past any fight, so it never reaches Infinity and breaks the save. */
   maxPower: 1e300,
+  /** Farthest ring; new rivals stop moving out here, so the save stays in bounds. */
+  maxRing: 1000,
 } as const;
 
 /** `power` held at RIVAL.maxPower. */
 function capPower(power: number): number {
   return Math.min(power, RIVAL.maxPower);
+}
+
+/** Rolls a level by `ring`'s odds (§7 Levels). */
+export function rollRivalLevel(rng: Rng, ring: number): RivalLevel {
+  const odds = RIVAL.levelOdds[Math.min(ring, RIVAL.levelOdds.length) - 1]!;
+  let r = rng();
+  // The odds sum to 1 up to float error; a roll past them all lands on the last level with odds.
+  const i = odds.findIndex((p) => (r -= p) < 0);
+  return RIVAL_LEVELS[i >= 0 ? i : odds.findLastIndex((p) => p > 0)]!;
+}
+
+/** Starting power of a `level` rival on `ring`: ring base × level factor (§7). */
+export function ringPower(ring: number, level: RivalLevel): number {
+  return capPower(RIVAL.ringBase * RIVAL.ringScale ** (ring - 1) * RIVAL_LEVEL_INFO[level].factor);
 }
 
 const NAME_HEADS = [
@@ -383,11 +463,13 @@ function rivalName(rng: Rng, taken: ReadonlySet<string>): string {
 }
 
 /**
- * A new, unscouted rival of `power` on `ring` (§7); its name differs from every
- * name in `taken`, and its trait is one of rivalTraits(ring), each equally likely.
+ * A new, unscouted `level` rival of `power` on `ring` (§7), its ceiling set by
+ * its level; its name differs from every name in `taken`, and its trait is one
+ * of rivalTraits(ring), each equally likely.
  */
 export function createRival(
   rng: Rng,
+  level: RivalLevel,
   power: number,
   ring: number,
   taken: ReadonlySet<string>,
@@ -395,11 +477,19 @@ export function createRival(
   return {
     name: rivalName(rng, taken),
     ring,
+    level,
     trait: pick(rng, rivalTraits(ring)),
     power,
+    ceiling: capPower(power * RIVAL_LEVEL_INFO[level].ceiling),
     hostile: chance(rng, RIVAL.hostileChance),
     scouted: false,
   };
+}
+
+/** A new rival on `ring`: its level rolled by the ring's odds, its power ringPower() (§7, §8). */
+export function ringRival(rng: Rng, ring: number, taken: ReadonlySet<string>): Rival {
+  const level = rollRivalLevel(rng, ring);
+  return createRival(rng, level, ringPower(ring, level), ring, taken);
 }
 
 /**
@@ -411,24 +501,45 @@ export function startingRivals(seed: number): Rival[] {
   const rivals: Rival[] = [];
   RIVAL.startingPowers.forEach((power, i) => {
     const taken = new Set(rivals.map((r) => r.name));
-    rivals.push(createRival(rng, power, RIVAL.startingRings[i]!, taken));
+    const level = RIVAL.startingLevels[i]!;
+    rivals.push(createRival(rng, level, power, RIVAL.startingRings[i]!, taken));
   });
   return rivals;
 }
 
-/** One year of rival growth: every rival's power × 1.04, or × 1.06 under Golden age (§7, §9). */
+/** `rival` with power `power`, held at its ceiling. */
+function withPower(rival: Rival, power: number): Rival {
+  return { ...rival, power: Math.min(power, rival.ceiling) };
+}
+
+/**
+ * One year of rival growth (§7): each rival's power × (1 + its level's growth),
+ * +2% more under Golden age (§9), held at its ceiling.
+ */
 export function growRivals(realm: Realm): Realm {
-  const by = 1 + RIVAL.growthPerYear + traitModifiers(realm).rivalGrowth;
-  return { ...realm, rivals: realm.rivals.map((r) => ({ ...r, power: capPower(r.power * by) })) };
+  const extra = traitModifiers(realm).rivalGrowth;
+  return {
+    ...realm,
+    rivals: realm.rivals.map((r) =>
+      withPower(r, r.power * (1 + RIVAL_LEVEL_INFO[r.level].growth + extra)),
+    ),
+  };
 }
 
 /** Gold prices of the rival actions (docs/design.md §7). */
 export const RIVAL_ACTIONS = { scoutGold: 15, tributeGold: 30 } as const;
 
-/** What the UI may show of a rival: trait and power only once it is scouted (§7). */
+/** What the UI may show of a rival: level, trait and power only once it is scouted (§7). */
 export type RivalView =
   | { name: string; hostile: boolean; scouted: false }
-  | { name: string; hostile: boolean; scouted: true; trait: Trait; power: number };
+  | {
+      name: string;
+      hostile: boolean;
+      scouted: true;
+      level: RivalLevel;
+      trait: Trait;
+      power: number;
+    };
 
 /** A rival as the UI may see it; an unscouted rival's hidden stats are left out, not blanked. */
 export function rivalView(rival: Rival): RivalView {
@@ -438,6 +549,7 @@ export function rivalView(rival: Rival): RivalView {
     name,
     hostile,
     scouted: true,
+    level: rival.level,
     trait: rival.trait,
     power: rival.power,
   };
@@ -449,7 +561,7 @@ function updateRival(realm: Realm, index: number, change: (r: Rival) => Rival): 
 }
 
 /**
- * Scouts rival `index` for 15 gold, revealing its power and trait (§7).
+ * Scouts rival `index` for 15 gold, revealing its level, power and trait (§7).
  * Nothing changes if there is no such rival, it is already scouted, or gold is short.
  */
 export function scout(realm: Realm, index: number): Realm {
@@ -461,7 +573,7 @@ export function scout(realm: Realm, index: number): Realm {
   return chronicle(
     next,
     'rivals',
-    `Scouted ${rival.name}: power ${power}, ${traitLabel(rival.trait)}.`,
+    `Scouted ${rival.name}: ${RIVAL_LEVEL_INFO[rival.level].name}, power ${power}, ${traitLabel(rival.trait)}.`,
   );
 }
 
@@ -489,7 +601,6 @@ export const BATTLE = {
   defeatRivalGrowth: 0.1,
   annexHousing: 10,
   annexPeoplePer: 8,
-  nextRivalScale: 1.5,
 } as const;
 
 /**
@@ -506,8 +617,9 @@ export function winChance(p: number, e: number): number {
  * Sends the field army against rival `index`, rolling the win chance on `rng` (§7).
  * Win: lose ⌈soldiers × (0.1 + 0.3 × (1 − chance))⌉ soldiers and annex the
  * rival: +10 housing, +⌊E / 8⌋ idle people, +E gold (up to the cap) and its
- * trait; a new rival appears at 1.5× the strongest rival's power.
- * Loss: lose ⌈50%⌉ of soldiers; the rival gains +10% power and turns hostile.
+ * trait; a new rival appears on the next ring out (ringRival).
+ * Loss: lose ⌈50%⌉ of soldiers; the rival gains +10% power, up to its
+ * ceiling, and turns hostile.
  * Nothing changes if there is no such rival or no soldiers.
  */
 export function attack(realm: Realm, index: number, rng: Rng): Realm {
@@ -516,9 +628,8 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   const odds = winChance(armyPower(realm), rival.power);
   if (!chance(rng, odds)) {
     const lost = Math.ceil(realm.soldiers * BATTLE.defeatLoss);
-    const next = updateRival({ ...realm, soldiers: realm.soldiers - lost }, index, (r) => ({
-      ...r,
-      power: capPower(r.power * (1 + BATTLE.defeatRivalGrowth)),
+    const next = updateRival(withLosses(realm, lost), index, (r) => ({
+      ...withPower(r, r.power * (1 + BATTLE.defeatRivalGrowth)),
       hostile: true,
     }));
     return chronicle(next, 'battles', `Lost a battle against ${rival.name}: ${fell(lost)}.`);
@@ -526,18 +637,17 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   const share = BATTLE.winLossBase + BATTLE.winLossRisk * (1 - odds);
   // The epsilon keeps float noise from rounding an exact whole loss up by one.
   const lost = Math.min(realm.soldiers, Math.ceil(realm.soldiers * share - 1e-9));
-  const strongest = Math.max(...realm.rivals.map((r) => r.power));
   const rest = realm.rivals.filter((_, i) => i !== index);
   const taken = new Set([rival.name, ...rest.map((r) => r.name)]);
-  const ring = Math.max(...realm.rivals.map((r) => r.ring)) + 1;
-  const fresh = createRival(rng, capPower(strongest * BATTLE.nextRivalScale), ring, taken);
+  const ring = Math.min(rival.ring + 1, RIVAL.maxRing);
+  const fresh = ringRival(rng, ring, taken);
+  const after = withLosses(realm, lost);
   const annexed: Realm = {
-    ...realm,
+    ...after,
     battlesWon: realm.battlesWon + 1,
-    soldiers: realm.soldiers - lost,
     idle: realm.idle + Math.floor(rival.power / BATTLE.annexPeoplePer),
     annexedHousing: realm.annexedHousing + BATTLE.annexHousing,
-    stores: { ...realm.stores, gold: addStore(realm, 'gold', rival.power) },
+    stores: { ...after.stores, gold: addStore(after, 'gold', rival.power) },
     rivals: [...rest, fresh],
   };
   const won = chronicle(
@@ -546,6 +656,12 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
     `Conquered ${rival.name}: ${fell(lost)}; ${fresh.name} appears beyond it.`,
   );
   return gainTrait(won, rival.trait);
+}
+
+/** The realm after losing `lost` soldiers in battle, with their weapons (§6). */
+function withLosses(realm: Realm, lost: number): Realm {
+  const weapons = realm.stores.weapons - weaponsLost(realm, lost);
+  return { ...realm, soldiers: realm.soldiers - lost, stores: { ...realm.stores, weapons } };
 }
 
 /** Raid timing, strength range and loss (docs/design.md §7). */
@@ -1126,23 +1242,23 @@ interface StorehouseLevel {
 /** Storehouse levels 0–3 (docs/design.md §5). */
 export const STOREHOUSE: readonly StorehouseLevel[] = [
   {
-    caps: { food: 200, wood: 200, iron: 50, gold: 150 },
-    safe: { food: 0, wood: 0, iron: 0, gold: 0 },
+    caps: { food: 200, wood: 200, iron: 50, gold: 150, weapons: 20 },
+    safe: { food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 },
     cost: {},
   },
   {
-    caps: { food: 500, wood: 600, iron: 120, gold: 400 },
-    safe: { food: 50, wood: 60, iron: 12, gold: 40 },
+    caps: { food: 500, wood: 600, iron: 120, gold: 400, weapons: 60 },
+    safe: { food: 50, wood: 60, iron: 12, gold: 40, weapons: 0 },
     cost: { wood: 60 },
   },
   {
-    caps: { food: 1500, wood: 2000, iron: 400, gold: 1200 },
-    safe: { food: 200, wood: 250, iron: 50, gold: 150 },
+    caps: { food: 1500, wood: 2000, iron: 400, gold: 1200, weapons: 200 },
+    safe: { food: 200, wood: 250, iron: 50, gold: 150, weapons: 0 },
     cost: { wood: 200, iron: 30 },
   },
   {
-    caps: { food: 5000, wood: 6000, iron: 1200, gold: 4000 },
-    safe: { food: 750, wood: 900, iron: 180, gold: 600 },
+    caps: { food: 5000, wood: 6000, iron: 1200, gold: 4000, weapons: 600 },
+    safe: { food: 750, wood: 900, iron: 180, gold: 600, weapons: 0 },
     cost: { wood: 600, iron: 120, gold: 100 },
   },
 ];
@@ -1191,12 +1307,23 @@ export function pay(realm: Realm, cost: Cost): Realm {
   return { ...realm, stores };
 }
 
+/** Top level of Huts, Markets and Forges (§5). */
+export const UPGRADE_MAX = 5;
+
+/** Each level past 1 adds this share of a Hut's, Market's or Forge's level-1 effect (§5). */
+export const UPGRADE_STEP = 0.5;
+
+/** The effect multiplier of a kind at `level`: 1 at level 1, +50% per level after. */
+export function upgradeBonus(level: number): number {
+  return 1 + UPGRADE_STEP * (level - 1);
+}
+
 /** A requirement (§5): a whole population, or a finished building at a level. */
 export type Need = { people: number } | { building: Construction; level: number };
 
 interface ConstructionInfo {
   name: string;
-  /** Cost and build work of the first one, each × its growthⁿ (§5). */
+  /** Cost and build work of one, each × its growthⁿ for a level (§5). */
   cost: Cost;
   costGrowth: number;
   work: number;
@@ -1219,22 +1346,43 @@ export const CONSTRUCTION_INFO: Record<Construction, ConstructionInfo> = {
   hut: {
     name: 'Hut',
     cost: { wood: 25 },
-    costGrowth: 1.3,
+    costGrowth: 1,
     work: 20,
-    workGrowth: 1.2,
+    workGrowth: 1,
     max: Infinity,
     levelled: false,
     needs: [],
   },
+  hutLevel: {
+    name: 'Huts',
+    // Level 2 costs 150 wood and 50 gold; each level after costs 2× the last.
+    cost: { wood: 75, gold: 25 },
+    costGrowth: 2,
+    work: 30,
+    workGrowth: 2,
+    max: UPGRADE_MAX,
+    levelled: true,
+    needs: [{ building: 'hut', level: 1 }],
+  },
   market: {
     name: 'Market',
     cost: { wood: 40, gold: 30 },
-    costGrowth: 1.5,
+    costGrowth: 1,
     work: 40,
-    workGrowth: 1.2,
+    workGrowth: 1,
     max: Infinity,
     levelled: false,
     needs: [{ building: 'storehouse', level: 1 }],
+  },
+  marketLevel: {
+    name: 'Markets',
+    cost: { wood: 100, gold: 75 },
+    costGrowth: 2,
+    work: 40,
+    workGrowth: 2,
+    max: UPGRADE_MAX,
+    levelled: true,
+    needs: [{ building: 'market', level: 1 }],
   },
   barracks: {
     name: 'Barracks',
@@ -1249,12 +1397,22 @@ export const CONSTRUCTION_INFO: Record<Construction, ConstructionInfo> = {
   forge: {
     name: 'Forge',
     cost: { wood: 60, iron: 20 },
-    costGrowth: 2,
+    costGrowth: 1,
     work: 60,
-    workGrowth: 1.2,
+    workGrowth: 1,
     max: Infinity,
     levelled: false,
     needs: [{ building: 'barracks', level: 1 }],
+  },
+  forgeLevel: {
+    name: 'Forges',
+    cost: { wood: 75, iron: 30 },
+    costGrowth: 2,
+    work: 40,
+    workGrowth: 2,
+    max: UPGRADE_MAX,
+    levelled: true,
+    needs: [{ building: 'forge', level: 1 }],
   },
   wall: {
     name: 'Wall',
@@ -1291,6 +1449,9 @@ export const CONSTRUCTION_INFO: Record<Construction, ConstructionInfo> = {
 /** Orders the construction queue holds at most (§5). */
 export const QUEUE_MAX = 5;
 
+/** Most Huts, Markets or Forges one order builds (§5). */
+export const BUILD_MAX = 10;
+
 /** Capital defence against raids per Wall level (§7). */
 export const WALL_BONUS = 0.2;
 
@@ -1299,9 +1460,9 @@ export function built(realm: Realm, c: Construction): number {
   return c === 'storehouse' ? realm.storehouse : realm.buildings[c];
 }
 
-/** How many orders for `c` are in the queue. */
+/** How many of `c` the queue will build: the sum of its orders' counts. */
 export function queued(realm: Realm, c: Construction): number {
-  return realm.queue.filter((o) => o.building === c).length;
+  return realm.queue.reduce((sum, o) => (o.building === c ? sum + o.count : sum), 0);
 }
 
 /**
@@ -1312,21 +1473,38 @@ function nextN(realm: Realm, c: Construction): number {
   return built(realm, c) + queued(realm, c);
 }
 
-/** What the next order of `c` costs: base × growthⁿ, rounded up; the Storehouse by its table. */
-export function orderCost(realm: Realm, c: Construction): Cost {
+/**
+ * How many the next order of `c` builds when `count` are asked for: 1 for a
+ * level, else `count` kept to 1..BUILD_MAX and to what is left below its max.
+ * 0 when `count` is not a whole number of at least 1.
+ */
+function orderCount(realm: Realm, c: Construction, count: number): number {
+  if (!Number.isInteger(count) || count < 1) return 0;
+  const { levelled, max } = CONSTRUCTION_INFO[c];
+  if (levelled) return 1;
+  return Math.max(0, Math.min(count, BUILD_MAX, max - nextN(realm, c)));
+}
+
+/**
+ * What the next order of `count` × `c` costs (§5): a level costs base × growthⁿ,
+ * rounded up (the Storehouse by its table); anything else base × count.
+ */
+export function orderCost(realm: Realm, c: Construction, count = 1): Cost {
   const n = nextN(realm, c);
   if (c === 'storehouse') return storehouseLevel(n + 1).cost;
   const { cost: base, costGrowth } = CONSTRUCTION_INFO[c];
+  const times = Math.max(1, orderCount(realm, c, count));
   const cost: Cost = {};
   for (const k of RESOURCES)
-    if (base[k] !== undefined) cost[k] = Math.ceil(base[k] * costGrowth ** n);
+    if (base[k] !== undefined) cost[k] = Math.ceil(base[k] * costGrowth ** n) * times;
   return cost;
 }
 
-/** The build work of the next order of `c`: base × growthⁿ, rounded up (§5). */
-export function orderWork(realm: Realm, c: Construction): number {
+/** The build work of the next order of `count` × `c`, like orderCost() (§5). */
+export function orderWork(realm: Realm, c: Construction, count = 1): number {
   const { work, workGrowth } = CONSTRUCTION_INFO[c];
-  return Math.ceil(work * workGrowth ** nextN(realm, c));
+  const times = Math.max(1, orderCount(realm, c, count));
+  return Math.ceil(work * workGrowth ** nextN(realm, c)) * times;
 }
 
 /** True when `need` is met; buildings count only once finished (§5). */
@@ -1353,33 +1531,45 @@ export function atMax(realm: Realm, c: Construction): boolean {
   return nextN(realm, c) >= CONSTRUCTION_INFO[c].max;
 }
 
-/** "a Hut" or "Wall level 2": the order of `c` that makes its `n`th one or level `n`. */
-function orderLabel(c: Construction, n: number, article = 'a '): string {
+/**
+ * "a Hut", "3 Huts" or "Wall level 2": an order of `count` × `c`, or the one
+ * that raises `c` to level `n`.
+ */
+function orderLabel(c: Construction, n: number, count = 1, article = 'a '): string {
   const { name, levelled } = CONSTRUCTION_INFO[c];
-  return levelled ? `${name} level ${n}` : `${article}${name}`;
+  if (levelled) return `${name} level ${n}`;
+  return count > 1 ? `${count} ${name}s` : `${article}${name}`;
 }
 
-/** True when an order of `c` would be taken now: queue room, below max, unlocked and affordable. */
-export function canOrder(realm: Realm, c: Construction): boolean {
+/**
+ * True when an order of `count` × `c` would be taken now: queue room, room
+ * below its max for all of them, unlocked and affordable.
+ */
+export function canOrder(realm: Realm, c: Construction, count = 1): boolean {
+  const n = orderCount(realm, c, count);
   return (
     realm.queue.length < QUEUE_MAX &&
-    !atMax(realm, c) &&
+    n >= 1 &&
+    (CONSTRUCTION_INFO[c].levelled || n === count) &&
     unmetNeeds(realm, c).length === 0 &&
-    canAfford(realm, orderCost(realm, c))
+    canAfford(realm, orderCost(realm, c, n))
   );
 }
 
 /**
- * Orders one `c` (§5): pays its cost and adds it to the end of the queue with
- * its cost and build work fixed. Nothing changes if canOrder() is false.
+ * Orders `count` × `c` as one queue order (§5): pays its cost and adds it to
+ * the end of the queue with its cost and build work fixed. A level is always
+ * one. Nothing changes if canOrder() is false.
  */
-export function order(realm: Realm, c: Construction): Realm {
-  if (!canOrder(realm, c)) return realm;
-  const cost = orderCost(realm, c);
-  const label = orderLabel(c, nextN(realm, c) + 1);
+export function order(realm: Realm, c: Construction, count = 1): Realm {
+  if (!canOrder(realm, c, count)) return realm;
+  const n = orderCount(realm, c, count);
+  const cost = orderCost(realm, c, n);
+  const label = orderLabel(c, nextN(realm, c) + 1, n);
+  const work = orderWork(realm, c, n);
   const next = {
     ...pay(realm, cost),
-    queue: [...realm.queue, { building: c, cost, work: orderWork(realm, c), done: 0 }],
+    queue: [...realm.queue, { building: c, count: n, cost, work, done: 0 }],
   };
   return chronicle(next, 'buildings', `Ordered ${label}.`);
 }
@@ -1400,11 +1590,12 @@ export function cancelOrder(realm: Realm, index: number): Realm {
   // The k-th queued order of c makes built + k.
   let n = built(realm, c);
   realm.queue.forEach((o, i) => {
-    if (o.building === c) n++;
+    if (o.building === c) n += o.count;
     if (!gone(o, i)) return;
     const stores = { ...next.stores };
     for (const k of RESOURCES) stores[k] = addStore(next, k, o.cost[k] ?? 0);
-    next = chronicle({ ...next, stores }, 'buildings', `Cancelled ${orderLabel(c, n)}.`);
+    const label = orderLabel(c, n, o.count);
+    next = chronicle({ ...next, stores }, 'buildings', `Cancelled ${label}.`);
   });
   return next;
 }
@@ -1427,7 +1618,7 @@ export function timeLeft(realm: Realm): number[] | null {
 
 /** One queue row for the build panel (§5). */
 export interface OrderView {
-  /** "Hut" or "Wall level 2". */
+  /** "Hut", "3 Huts" or "Wall level 2". */
   label: string;
   done: number;
   work: number;
@@ -1440,9 +1631,9 @@ export function queueView(realm: Realm): OrderView[] {
   const left = timeLeft(realm);
   const made: Partial<Record<Construction, number>> = {};
   return realm.queue.map((o, i) => {
-    const n = (made[o.building] = (made[o.building] ?? built(realm, o.building)) + 1);
+    const n = (made[o.building] = (made[o.building] ?? built(realm, o.building)) + o.count);
     return {
-      label: orderLabel(o.building, n, ''),
+      label: orderLabel(o.building, n, o.count, ''),
       done: o.done,
       work: o.work,
       secondsLeft: left?.[i] ?? null,
@@ -1452,8 +1643,8 @@ export function queueView(realm: Realm): OrderView[] {
 
 /** Finishes the first order: the building takes effect and is written to the Chronicle (§5). */
 function finishOrder(realm: Realm): Realm {
-  const c = realm.queue[0]!.building;
-  const n = built(realm, c) + 1;
+  const { building: c, count } = realm.queue[0]!;
+  const n = built(realm, c) + count;
   const queue = realm.queue.slice(1);
   if (c === 'storehouse')
     return chronicle(
@@ -1463,7 +1654,9 @@ function finishOrder(realm: Realm): Realm {
     );
   const next = { ...realm, queue, buildings: { ...realm.buildings, [c]: n } };
   const { name, levelled } = CONSTRUCTION_INFO[c];
-  const text = levelled ? `Raised the ${name} to level ${n}.` : `Built a ${name}.`;
+  const text = levelled
+    ? `Raised ${c === 'wall' || c === 'tower' ? 'the ' : ''}${name} to level ${n}.`
+    : `Built ${orderLabel(c, n, count)}.`;
   return chronicle(next, 'buildings', text);
 }
 
@@ -1488,12 +1681,40 @@ function construct(realm: Realm, work: number): Realm {
   return next;
 }
 
-/** Army power bonus per Forge (§6: power × (1 + 0.5 × forges)). */
-export const FORGE_BONUS = 0.5;
+/** Weapon making per Forge, and what a weapon adds (docs/design.md §5, §6). */
+export const FORGE = {
+  /** Seconds per weapon, per Forge. */
+  every: 5,
+  /** Iron used per weapon. */
+  iron: 2,
+  /** An armed soldier fights at × (1 + this × Forges level). */
+  armedBonus: 0.5,
+} as const;
 
-/** The Forge multiplier on army power (§6). */
-export function forgeBonus(realm: Realm): number {
-  return 1 + FORGE_BONUS * realm.buildings.forge;
+/** Soldiers carrying a weapon: one per whole weapon in store, up to the soldiers (§6). */
+export function armedSoldiers(realm: Realm): number {
+  return Math.min(realm.soldiers, Math.floor(realm.stores.weapons));
+}
+
+/** The power multiplier of an armed soldier at the Forges level (§6). */
+export function weaponBonus(realm: Realm): number {
+  return 1 + FORGE.armedBonus * realm.buildings.forgeLevel;
+}
+
+/**
+ * Weapons the Forges make in `dt` seconds (§5): each makes one per FORGE.every
+ * seconds from FORGE.iron iron, while there is iron and room under the cap.
+ */
+function forged(realm: Realm, stores: Record<Resource, number>, dt: number): number {
+  const room = storeCaps(realm).weapons - stores.weapons;
+  const made = (realm.buildings.forge * dt) / FORGE.every;
+  return Math.max(0, Math.min(made, stores.iron / FORGE.iron, room));
+}
+
+/** Weapons lost with `lost` of the realm's soldiers: their share of the armed ones (§6). */
+function weaponsLost(realm: Realm, lost: number): number {
+  if (realm.soldiers === 0) return 0;
+  return Math.min(realm.stores.weapons, Math.round((lost * armedSoldiers(realm)) / realm.soldiers));
 }
 
 /** Spearmen, the one Phase 1 unit (docs/design.md §6): 1 peasant + this cost each. */
@@ -1503,12 +1724,14 @@ export const SOLDIER: { readonly cost: Cost; readonly power: number } = {
 };
 
 /**
- * Field army power (§6): base power of every soldier × its slotted trait
- * modifiers (spearmen and army bonuses add up) × the Forge multiplier.
+ * Field army power (§6): base power of every soldier, × weaponBonus() for each
+ * armed one, × slotted trait modifiers (spearmen and army bonuses add up).
  */
 export function armyPower(realm: Realm): number {
   const m = traitModifiers(realm);
-  return realm.soldiers * SOLDIER.power * (1 + m.spearmen + m.army) * forgeBonus(realm);
+  const armed = armedSoldiers(realm);
+  const soldiers = realm.soldiers - armed + armed * weaponBonus(realm);
+  return soldiers * SOLDIER.power * (1 + m.spearmen + m.army);
 }
 
 /** What a raid on the capital must beat (§7): field army power × (1 + 0.2 × Wall level). */
@@ -1525,8 +1748,11 @@ export function population(realm: Realm): number {
   return realm.idle + workers(realm) + realm.soldiers;
 }
 
+/** Housing (§4, §5): base + each Hut's housing at the Huts level (rounded down) + annexed. */
 export function housingCap(realm: Realm): number {
-  return PEOPLE.baseHousing + realm.buildings.hut * PEOPLE.hutHousing + realm.annexedHousing;
+  const { hut, hutLevel } = realm.buildings;
+  const huts = Math.floor(hut * PEOPLE.hutHousing * upgradeBonus(hutLevel));
+  return PEOPLE.baseHousing + huts + realm.annexedHousing;
 }
 
 /** Whole, non-negative count; anything else (NaN, negative, fractional part) is trimmed. */
@@ -1582,11 +1808,8 @@ export function shortfall(realm: Realm): number {
   return eaten > produced ? (eaten - produced) / eaten : 0;
 }
 
-/**
- * Net change per second of every store, after slotted trait modifiers (§9).
- * Wood, iron and tax shrink by (1 − s) while starving; Market gold doesn't.
- */
-export function rates(realm: Realm): Record<Resource, number> {
+/** Net change per second of every store but the Forges' share, which step() works out exactly. */
+function production(realm: Realm): Record<Resource, number> {
   const civilians = realm.idle + workers(realm);
   const fed = 1 - shortfall(realm);
   const m = traitModifiers(realm);
@@ -1599,9 +1822,22 @@ export function rates(realm: Realm): Record<Resource, number> {
     iron: realm.jobs.miner * RATES.minerIron * (1 + m.miner) * fed,
     gold:
       workers(realm) * RATES.taxPerWorker * (1 + m.tax) * fed +
-      realm.buildings.market * RATES.marketGold -
+      realm.buildings.market * RATES.marketGold * upgradeBonus(realm.buildings.marketLevel) -
       realm.soldiers * RATES.soldierUpkeep * (1 + m.soldierUpkeep),
+    weapons: 0,
   };
+}
+
+/**
+ * Net change per second of every store, after slotted trait modifiers (§9).
+ * Wood, iron and tax shrink by (1 − s) while starving; Market gold doesn't.
+ * Forges turn iron into weapons while there is iron and room for them (§5).
+ */
+export function rates(realm: Realm): Record<Resource, number> {
+  const r = production(realm);
+  const room = storeCaps(realm).weapons > realm.stores.weapons;
+  const forging = room && realm.stores.iron > 0 ? realm.buildings.forge / FORGE.every : 0;
+  return { ...r, iron: r.iron - forging * FORGE.iron, weapons: forging };
 }
 
 /**
@@ -1690,10 +1926,13 @@ function happenings(seed: number, from: number, to: number): Happening[] {
 
 /** One stretch of tick() that ends on or before the next raid or event. */
 function step(realm: Realm, dt: number): Realm {
-  const r = rates(realm);
+  const r = production(realm);
   const caps = storeCaps(realm);
   const stores = { ...realm.stores };
   for (const k of RESOURCES) stores[k] = Math.min(caps[k], Math.max(0, stores[k] + r[k] * dt));
+  const made = forged(realm, stores, dt);
+  stores.iron -= made * FORGE.iron;
+  stores.weapons += made;
 
   let idle = realm.idle;
   let growth = realm.growth + dt;

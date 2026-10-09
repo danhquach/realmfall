@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { advance, MAX_CATCHUP } from './loop.ts';
 import { createRng } from './rng.ts';
 import {
   RESOURCES,
@@ -13,7 +14,6 @@ import {
   assign,
   attack,
   awaySummary,
-  BATTLE,
   built,
   buildRate,
   cancelOrder,
@@ -32,6 +32,12 @@ import {
   WALL_BONUS,
   RIVAL,
   RIVAL_ACTIONS,
+  RIVAL_LEVELS,
+  RIVAL_LEVEL_INFO,
+  type Rival,
+  ringPower,
+  ringRival,
+  rollRivalLevel,
   RAID,
   EVENT,
   EVENTS,
@@ -224,8 +230,10 @@ describe('createRealm', () => {
     a.rivals.push({
       name: 'X',
       ring: 1,
+      level: 'weak',
       trait: 'timberClans',
       power: 1,
+      ceiling: 2,
       hostile: true,
       scouted: false,
     });
@@ -823,21 +831,14 @@ describe('buildings (design §5)', () => {
   const works = (building: Building, ns = [0, 1, 2, 3, 4, 5]) =>
     ns.map((n) => orderWork(owning(building, n), building));
 
-  it('Hut costs 25 × 1.3ⁿ wood and 20 × 1.2ⁿ work, rounded up, for n = 0..5', () => {
-    expect(costs('hut')).toEqual([25, 33, 43, 55, 72, 93].map((wood) => ({ wood })));
-    expect(works('hut')).toEqual([20, 24, 29, 35, 42, 50]);
+  it('every Hut costs 25 wood and 20 work, however many are built', () => {
+    expect(costs('hut')).toEqual(Array(6).fill({ wood: 25 }));
+    expect(works('hut')).toEqual(Array(6).fill(20));
   });
 
-  it('Market costs 40 × 1.5ⁿ wood, 30 × 1.5ⁿ gold and 40 × 1.2ⁿ work', () => {
-    expect(costs('market')).toEqual([
-      { wood: 40, gold: 30 },
-      { wood: 60, gold: 45 },
-      { wood: 90, gold: 68 },
-      { wood: 135, gold: 102 },
-      { wood: 203, gold: 152 },
-      { wood: 304, gold: 228 },
-    ]);
-    expect(works('market')).toEqual([40, 48, 58, 70, 83, 100]);
+  it('every Market costs 40 wood, 30 gold and 40 work', () => {
+    expect(costs('market')).toEqual(Array(6).fill({ wood: 40, gold: 30 }));
+    expect(works('market')).toEqual(Array(6).fill(40));
   });
 
   it('Barracks costs 50 wood, 20 gold and 40 work', () => {
@@ -845,16 +846,9 @@ describe('buildings (design §5)', () => {
     expect(works('barracks', [0])).toEqual([40]);
   });
 
-  it('Forge costs 60 × 2ⁿ wood, 20 × 2ⁿ iron and 60 × 1.2ⁿ work', () => {
-    expect(costs('forge')).toEqual([
-      { wood: 60, iron: 20 },
-      { wood: 120, iron: 40 },
-      { wood: 240, iron: 80 },
-      { wood: 480, iron: 160 },
-      { wood: 960, iron: 320 },
-      { wood: 1920, iron: 640 },
-    ]);
-    expect(works('forge')).toEqual([60, 72, 87, 104, 125, 150]);
+  it('every Forge costs 60 wood, 20 iron and 60 work', () => {
+    expect(costs('forge')).toEqual(Array(6).fill({ wood: 60, iron: 20 }));
+    expect(works('forge')).toEqual(Array(6).fill(60));
   });
 
   it('Wall levels 1–5 cost 50 × 2ⁿ wood, 15 × 2ⁿ iron and 40 × 2ⁿ work', () => {
@@ -888,17 +882,17 @@ describe('buildings (design §5)', () => {
   });
 
   it("can't order when the cost is above the store cap", () => {
-    // The 4th Forge needs 160 iron; level 0 holds at most 50.
+    // Wall level 3 needs 60 iron; level 0 holds at most 50.
     const realm = {
-      ...owning('forge', 3),
-      buildings: { ...owning('forge', 3).buildings, barracks: 1 },
+      ...owning('wall', 2),
+      buildings: { ...owning('wall', 2).buildings, barracks: 1 },
       jobs: { farmer: 6, woodcutter: 10, miner: 10, builder: 0 },
     };
     const later = tick(realm, 10000);
     expect(later.stores.iron).toBe(50);
-    expect(order(later, 'forge')).toBe(later);
-    const upgraded = { ...later, storehouse: 2, stores: { ...later.stores, wood: 480, iron: 160 } };
-    expect(finishAll(order(upgraded, 'forge')).buildings.forge).toBe(4);
+    expect(order(later, 'wall')).toBe(later);
+    const upgraded = { ...later, storehouse: 2, stores: { ...later.stores, wood: 200, iron: 60 } };
+    expect(finishAll(order(upgraded, 'wall')).buildings.wall).toBe(3);
   });
 
   it('does not mutate its input', () => {
@@ -975,8 +969,8 @@ describe('construction queue (design §5)', () => {
   });
 
   it('puts all builders on the first order and carries leftover work to the next', () => {
-    let realm = order(order(crew(2), 'hut'), 'hut'); // 20 + 24 work
-    expect(realm.queue.map((o) => o.work)).toEqual([20, 24]);
+    let realm = order(order(crew(2), 'hut'), 'hut'); // 20 + 20 work
+    expect(realm.queue.map((o) => o.work)).toEqual([20, 20]);
     realm = tick(realm, 15); // 30 work: the first is done, 10 goes to the second
     expect(realm.buildings.hut).toBe(1);
     expect(realm.queue).toHaveLength(1);
@@ -995,10 +989,12 @@ describe('construction queue (design §5)', () => {
   });
 
   it('fixes cost and build work when ordered', () => {
-    const realm = order(crew(1), 'hut');
-    const more = { ...realm, buildings: { ...realm.buildings, hut: 5 } };
-    expect(more.queue[0]).toEqual({ building: 'hut', cost: { wood: 25 }, work: 20, done: 0 });
-    expect(orderCost(more, 'hut')).toEqual({ wood: Math.ceil(25 * 1.3 ** 6) });
+    const camp = { ...crew(1), buildings: { ...crew(1).buildings, barracks: 1 } };
+    const realm = order(camp, 'wall');
+    const more = { ...realm, buildings: { ...realm.buildings, wall: 3 } };
+    const first = { building: 'wall', cost: { wood: 50, iron: 15 }, work: 40, done: 0 };
+    expect(more.queue[0]).toEqual(first);
+    expect(orderCost(more, 'wall')).toEqual({ wood: 50 * 2 ** 4, iron: 15 * 2 ** 4 });
   });
 
   it(`refuses order ${QUEUE_MAX + 1}`, () => {
@@ -1156,10 +1152,10 @@ describe('construction queue (design §5)', () => {
   it('shows each order with its progress and time left at the current builders', () => {
     let realm = { ...crew(2), buildings: { ...crew(2).buildings, hut: 1 } };
     realm = order(order(realm, 'hut'), 'storehouse');
-    realm = tick(realm, 4); // 8 of the Hut's 24 work
+    realm = tick(realm, 4); // 8 of the Hut's 20 work
     expect(queueView(realm)).toEqual([
-      { label: 'Hut', done: 8, work: 24, secondsLeft: 8 },
-      { label: 'Storehouse level 1', done: 0, work: 30, secondsLeft: 23 },
+      { label: 'Hut', done: 8, work: 20, secondsLeft: 6 },
+      { label: 'Storehouse level 1', done: 0, work: 30, secondsLeft: 21 },
     ]);
     const none = { ...realm, jobs: { ...realm.jobs, builder: 0 } };
     expect(queueView(none).map((o) => o.secondsLeft)).toEqual([null, null]);
@@ -1307,7 +1303,7 @@ describe('rivals', () => {
     const rng = createRng(3);
     const taken = new Set<string>();
     for (let i = 0; i < 300; i++) {
-      const { name } = createRival(rng, 1, 1, taken);
+      const { name } = createRival(rng, 'weak', 1, 1, taken);
       expect(taken.has(name)).toBe(false);
       taken.add(name);
     }
@@ -1318,7 +1314,9 @@ describe('rivals', () => {
       for (const r of startingRivals(seed)) {
         expect(r.name).toMatch(/^[A-Z][a-z]+$/);
         expect(Object.keys(r).sort()).toEqual([
+          'ceiling',
           'hostile',
+          'level',
           'name',
           'power',
           'ring',
@@ -1334,15 +1332,19 @@ describe('rivals', () => {
     const rng = createRng(8);
     const n = 10_000;
     let hostile = 0;
-    for (let i = 0; i < n; i++) if (createRival(rng, 1, 1, new Set()).hostile) hostile++;
+    for (let i = 0; i < n; i++) if (createRival(rng, 'weak', 1, 1, new Set()).hostile) hostile++;
     expect(hostile / n).toBeCloseTo(RIVAL.hostileChance, 1);
   });
 
-  it('grows every rival 4% per year and leaves the input untouched', () => {
+  it('grows each rival by its level per year and leaves the input untouched', () => {
     const realm = createRealm(5);
     const before = structuredClone(realm);
     const next = growRivals(growRivals(realm));
-    expect(next.rivals.map((r) => r.power)).toEqual([20, 45, 90].map((p) => p * 1.04 * 1.04));
+    expect(next.rivals.map((r) => r.power)).toEqual([
+      20 * 1.02 * 1.02,
+      45 * 1.03 * 1.03,
+      90 * 1.04 * 1.04,
+    ]);
     expect(next.rivals.map((r) => r.name)).toEqual(realm.rivals.map((r) => r.name));
     expect(realm).toEqual(before);
   });
@@ -1350,7 +1352,7 @@ describe('rivals', () => {
 
 describe('years (design §10)', () => {
   const powers = (realm: Realm) => realm.rivals.map((r) => r.power);
-  const grown = (years: number) => [20, 45, 90].map((p) => p * 1.04 ** years);
+  const grown = (years: number) => [20 * 1.02 ** years, 45 * 1.03 ** years, 90 * 1.04 ** years];
 
   it('is 8 s of game time', () => {
     expect(YEAR_SECONDS).toBe(8);
@@ -1500,11 +1502,12 @@ describe('rivalView (design §7)', () => {
     expect(text).not.toContain('power');
   });
 
-  it('shows trait and power once scouted', () => {
+  it('shows level, trait and power once scouted', () => {
     expect(rivalView({ ...rival, scouted: true })).toEqual({
       name: rival.name,
       hostile: rival.hostile,
       scouted: true,
+      level: rival.level,
       trait: rival.trait,
       power: rival.power,
     });
@@ -1518,6 +1521,90 @@ describe('rivalView (design §7)', () => {
   });
 });
 
+describe('rival levels and ceilings (design §7)', () => {
+  const atCeiling = (realm: Realm) => realm.rivals.map((r) => ({ ...r, power: r.ceiling }));
+
+  it('starts Weak, Average and Strong, each capped at its level × start', () => {
+    const rivals = startingRivals(4);
+    expect(rivals.map((r) => r.level)).toEqual(['weak', 'average', 'strong']);
+    expect(rivals.map((r) => r.ceiling)).toEqual([40, 135, 360]);
+  });
+
+  it('sets starting power to ring base × level factor, 1.5× per ring', () => {
+    expect(ringPower(1, 'average')).toBe(45);
+    expect(ringPower(1, 'weak')).toBe(22.5);
+    expect(ringPower(2, 'strong')).toBe(45 * 1.5 * 2);
+    expect(ringPower(3, 'elite')).toBe(45 * 1.5 ** 2 * 3);
+    expect(ringPower(5000, 'elite')).toBe(RIVAL.maxPower);
+  });
+
+  it('rolls levels by ring odds, weighted outward', () => {
+    const rng = createRng(31);
+    const n = 20_000;
+    RIVAL.levelOdds.forEach((odds, i) => {
+      const counts = Object.fromEntries(RIVAL_LEVELS.map((l) => [l, 0]));
+      for (let k = 0; k < n; k++) counts[rollRivalLevel(rng, i + 1)]!++;
+      RIVAL_LEVELS.forEach((l, j) => expect(counts[l]! / n).toBeCloseTo(odds[j]!, 1));
+    });
+    for (let k = 0; k < 2000; k++) expect(rollRivalLevel(rng, 40)).not.toBe('weak');
+    expect(rollRivalLevel(() => 0.9999999999, 1)).toBe('average');
+    expect(rollRivalLevel(() => 0.9999999999, 9)).toBe('elite');
+  });
+
+  it("every ring's odds sum to 1", () => {
+    for (const odds of RIVAL.levelOdds)
+      expect(odds.reduce((a: number, b) => a + b, 0)).toBeCloseTo(1, 12);
+  });
+
+  it('a new ring rival gets its ceiling from its level', () => {
+    const rng = createRng(2);
+    for (let ring = 1; ring <= 6; ring++) {
+      const r = ringRival(rng, ring, new Set());
+      expect(r.power).toBe(ringPower(ring, r.level));
+      expect(r.ceiling).toBe(r.power * RIVAL_LEVEL_INFO[r.level].ceiling);
+    }
+  });
+
+  it('rolls the same levels and powers from the same seed', () => {
+    const roll = () => {
+      const rng = createRng(77);
+      return Array.from({ length: 20 }, (_, i) => ringRival(rng, 1 + (i % 5), new Set()));
+    };
+    expect(roll()).toEqual(roll());
+  });
+
+  it('yearly growth stops at the ceiling', () => {
+    let realm = createRealm(6);
+    for (let y = 0; y < 500; y++) realm = growRivals(realm);
+    expect(realm.rivals).toEqual(atCeiling(createRealm(6)));
+  });
+
+  it('Golden age raises the growth, not the ceiling', () => {
+    let realm: Realm = { ...createRealm(6), traits: { goldenAge: { level: 1, duplicates: 0 } } };
+    realm = { ...realm, slots: ['goldenAge', null, null] };
+    for (let y = 0; y < 500; y++) realm = growRivals(realm);
+    expect(realm.rivals.map((r) => r.power)).toEqual(realm.rivals.map((r) => r.ceiling));
+  });
+
+  it("a lost battle's +10% stops at the ceiling", () => {
+    const base = createRealm(6);
+    const near = { ...base, soldiers: 1, rivals: atCeiling(base) };
+    const lost = attack(near, 0, () => 0.999999);
+    expect(lost.rivals[0]!.power).toBe(near.rivals[0]!.ceiling);
+    const below = { ...base, soldiers: 1 };
+    expect(attack(below, 0, () => 0.999999).rivals[0]!.power).toBeCloseTo(22);
+  });
+
+  it('8 hours away leaves every rival at or below its ceiling, the Weak one beatable', () => {
+    const later = advance(createRealm(6), MAX_CATCHUP).realm;
+    for (const r of later.rivals) expect(r.power).toBeLessThanOrEqual(r.ceiling);
+    const weak = later.rivals.find((r) => r.level === 'weak')!;
+    expect(weak.power).toBe(40);
+    // A mid-sized army: 30 spearmen with 2 Forges have 120 power.
+    expect(winChance(30 * 2 * 2, weak.power)).toBeGreaterThan(0.8);
+  });
+});
+
 describe('battle and annexation (design §7)', () => {
   const WIN = () => 0;
   const LOSE = () => 0.999999;
@@ -1528,7 +1615,9 @@ describe('battle and annexation (design §7)', () => {
       ...realm,
       soldiers,
       stores: { ...realm.stores, gold: 50 },
-      rivals: realm.rivals.map((r, i) => (i === 0 ? { ...r, power, hostile: false } : r)),
+      rivals: realm.rivals.map((r, i) =>
+        i === 0 ? { ...r, power, ceiling: RIVAL.maxPower, hostile: false } : r,
+      ),
     };
   };
 
@@ -1622,27 +1711,24 @@ describe('battle and annexation (design §7)', () => {
     expect(attack(owned, 0, WIN).traits).toEqual({ [trait]: { level: 2, duplicates: 2 } });
   });
 
-  it('places the new rival one ring past the farthest', () => {
+  it('places the new rival one ring past the conquered one', () => {
     const realm = armed(200, 20);
-    expect(attack(realm, 0, WIN).rivals[2]!.ring).toBe(3);
+    expect(attack(realm, 0, WIN).rivals[2]!.ring).toBe(2);
+    const far = { ...realm, rivals: [{ ...realm.rivals[0]!, ring: 5 }, ...realm.rivals.slice(1)] };
+    expect(attack(far, 0, WIN).rivals[2]!.ring).toBe(6);
   });
 
-  it('replaces the annexed rival with a new one at 1.5× the strongest', () => {
+  it('replaces the annexed rival with a new one rolled for its ring', () => {
     const realm = armed(200, 20);
-    const strongest = Math.max(...realm.rivals.map((r) => r.power));
     const next = attack(realm, 0, WIN);
     expect(next.rivals).toHaveLength(3);
     expect(next.rivals.slice(0, 2)).toEqual(realm.rivals.slice(1));
     const fresh = next.rivals[2]!;
-    expect(fresh.power).toBe(strongest * BATTLE.nextRivalScale);
+    expect(fresh.power).toBe(ringPower(fresh.ring, fresh.level));
+    expect(fresh.ceiling).toBe(fresh.power * RIVAL_LEVEL_INFO[fresh.level].ceiling);
     expect(fresh.scouted).toBe(false);
     expect(new Set(next.rivals.map((r) => r.name)).size).toBe(3);
     expect(fresh.name).not.toBe(realm.rivals[0]!.name);
-  });
-
-  it('annexing the strongest rival scales the next from its power', () => {
-    const realm = armed(500, 1000);
-    expect(attack(realm, 0, WIN).rivals[2]!.power).toBe(1500);
   });
 
   it('is deterministic for the same seeded roll', () => {
@@ -1747,10 +1833,11 @@ describe('traits (design §9)', () => {
       expect(r.gold).toBeCloseTo(made.tax * 1.25 - made.upkeep);
     });
 
-    it('Golden age: rivals gain +6% power per year instead of +4%', () => {
+    it('Golden age: rivals gain +2% power per year on top of their level', () => {
       const realm = withTraits({ goldenAge: 1 });
       const grown = growRivals(realm).rivals.map((r) => r.power);
-      expect(grown).toEqual(realm.rivals.map((r) => expect.closeTo(r.power * 1.06)));
+      const by = (r: Rival) => 1 + RIVAL_LEVEL_INFO[r.level].growth + 0.02;
+      expect(grown).toEqual(realm.rivals.map((r) => expect.closeTo(r.power * by(r))));
     });
 
     it('starvation shortfall counts the farmer modifier', () => {
@@ -1974,7 +2061,7 @@ describe('traits (design §9)', () => {
       const rng = createRng(21);
       for (let ring = 1; ring <= 7; ring++) {
         const seen = new Set<Trait>();
-        for (let i = 0; i < 400; i++) seen.add(createRival(rng, 1, ring, new Set()).trait);
+        for (let i = 0; i < 400; i++) seen.add(createRival(rng, 'weak', 1, ring, new Set()).trait);
         expect([...seen].sort()).toEqual(rivalTraits(ring).sort());
       }
     });
@@ -2330,7 +2417,7 @@ describe('Chronicle (design §12)', () => {
     const name = realm.rivals[0]!.name;
     const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
     expect(lines(scout(realm, 0))).toEqual([
-      `Scouted ${name}: power 20, ${traitLabel(realm.rivals[0]!.trait)}.`,
+      `Scouted ${name}: Weak, power 20, ${traitLabel(realm.rivals[0]!.trait)}.`,
     ]);
     expect(lines(tribute(hostile, 0))).toEqual([
       `Paid 30 gold of tribute to ${name}; now at peace.`,

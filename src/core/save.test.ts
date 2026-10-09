@@ -106,7 +106,32 @@ describe('save round trip', () => {
     const old = saved();
     delete old.realm.queue;
     expect(parse(JSON.stringify({ ...old, version: 2 }))).toBeNull();
-    expect(SAVE_VERSION).toBe(3);
+  });
+
+  it('starts a new game from a save before rival levels', () => {
+    const old = saved();
+    for (const r of old.realm.rivals as Record<string, unknown>[]) {
+      delete r.level;
+      delete r.ceiling;
+    }
+    expect(parse(JSON.stringify({ ...old, version: 3 }))).toBeNull();
+    expect(SAVE_VERSION).toBe(4);
+  });
+
+  it('rejects a rival past its ceiling', () => {
+    const ceiling = played().rivals[0]!.ceiling;
+    expect(parse(corrupt(['rivals', 0, 'power'], ceiling))).not.toBeNull();
+    expect(parse(corrupt(['rivals', 0, 'power'], ceiling * 1.0001))).toBeNull();
+  });
+
+  it('rejects an infinite ceiling written as 1e999', () => {
+    const save = corrupt(['rivals', 0, 'ceiling'], 12345.5);
+    expect(save).toContain('"ceiling":12345.5');
+    expect(parse(save.replace('"ceiling":12345.5', '"ceiling":1e999'))).toBeNull();
+  });
+
+  it.each(['level', 'ceiling'])('rejects a rival without its %s', (key) => {
+    expect(parse(without(['rivals', 0, key]))).toBeNull();
   });
 
   it('restores a new realm exactly', () => {
@@ -287,6 +312,23 @@ describe('parse rejects bad saves', () => {
     [['rivals', 0, 'trait'], 'dragonBlood'],
     [['rivals', 0, 'trait'], 'toString'],
     [['rivals', 0, 'power'], -5],
+    [['rivals', 0, 'level'], 'legendary'],
+    [['rivals', 0, 'level'], '__proto__'],
+    [['rivals', 0, 'level'], 'constructor'],
+    [['rivals', 0, 'level'], 'toString'],
+    [['rivals', 0, 'level'], 'hasOwnProperty'],
+    [['rivals', 0, 'level'], null],
+    [['rivals', 0, 'level'], 0],
+    [['rivals', 0, 'level'], '\u202eweak'],
+    [['rivals', 0, 'level'], 'w\u0435ak'],
+    [['rivals', 0, 'level'], 'Weak'],
+    [['rivals', 0, 'level'], ['weak']],
+    [['rivals', 0, 'level'], 'weak\u200b'],
+    [['rivals', 0, 'level'], 'w'.repeat(100_000)],
+    [['rivals', 0, 'ceiling'], -1],
+    [['rivals', 0, 'ceiling'], 1e301],
+    [['rivals', 0, 'ceiling'], '40'],
+    [['rivals', 0, 'ceiling'], null],
     [['rivals', 0, 'hostile'], 'true'],
     [['rivals', 0, 'scouted'], 1],
     ['traits', null],
@@ -569,18 +611,26 @@ describe('a loaded realm runs', () => {
 describe('late game', () => {
   it('holds rival power at the cap through battles', () => {
     let realm = played();
-    const top = { ...realm.rivals[0]!, power: RIVAL.maxPower };
+    const top = { ...realm.rivals[0]!, power: RIVAL.maxPower, ceiling: RIVAL.maxPower };
     realm = { ...realm, soldiers: 1, rivals: [top, ...realm.rivals.slice(1)] };
     const lost = attack(realm, 0, () => 0.99);
     expect(lost.rivals[0]!.power).toBe(RIVAL.maxPower);
-    const strong = { ...realm, soldiers: 1e9, rivals: [{ ...top, power: 1e9 }, top] };
-    const won = attack(strong, 0, () => 0);
-    expect(won.rivals.at(-1)!.power).toBe(RIVAL.maxPower);
+    const far = { ...top, power: 1e9, ring: SAVE_LIMITS.ring };
+    const won = attack({ ...realm, soldiers: 1e9, rivals: [far, top] }, 0, () => 0);
+    const fresh = won.rivals.at(-1)!;
+    expect(fresh.ring).toBe(SAVE_LIMITS.ring);
+    expect(Number.isFinite(fresh.ceiling)).toBe(true);
+    expect(fresh.ceiling).toBeLessThanOrEqual(RIVAL.maxPower);
+    expect(parse(serialize(won))).toEqual(won);
   });
 
   it('holds rival power at the cap, so a very old realm still saves', () => {
     const save = saved();
-    const rivals = (save.realm.rivals as object[]).map((r) => ({ ...r, power: 1e299 }));
+    const rivals = (save.realm.rivals as object[]).map((r) => ({
+      ...r,
+      power: 1e299,
+      ceiling: RIVAL.maxPower,
+    }));
     Object.assign(save.realm, { time: 25_000 * 8, year: 25_001, rivals });
     const old = parse(JSON.stringify(save))!;
     const later = advance(old, 8 * 60 * 60).realm;

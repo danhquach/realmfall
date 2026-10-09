@@ -1,11 +1,14 @@
 import {
+  BUILD_MAX,
   CONSTRUCTION_INFO,
   CONSTRUCTIONS,
   JOBS,
   QUEUE_MAX,
   RESOURCES,
   RIVAL_ACTIONS,
+  RIVAL_LEVEL_INFO,
   SOLDIER,
+  armedSoldiers,
   armyPower,
   assign,
   atMax,
@@ -22,6 +25,7 @@ import {
   orderWork,
   population,
   queueView,
+  queued,
   rates,
   rivalView,
   scout,
@@ -32,6 +36,7 @@ import {
   unassign,
   unmetNeeds,
   winChance,
+  type Construction,
   type Cost,
   type Job,
   type Realm,
@@ -66,6 +71,16 @@ function newLines(before: Realm, after: Realm): string[] {
   const last = before.chronicle.at(-1);
   const from = last ? after.chronicle.lastIndexOf(last) + 1 : 0;
   return after.chronicle.slice(from).map((e) => e.text);
+}
+
+/** One build-list row; Huts, Markets and Forges also pick how many to build at once. */
+interface BuildRow {
+  c: Construction;
+  li: HTMLLIElement;
+  label: HTMLSpanElement;
+  btn: HTMLButtonElement;
+  count: number;
+  picker: { less: HTMLButtonElement; shown: HTMLSpanElement; more: HTMLButtonElement } | null;
 }
 
 interface RivalRow {
@@ -127,11 +142,23 @@ export function mountRealmPanels(
   buildings.append(buildList);
   const buildRows = CONSTRUCTIONS.map((c) => {
     const label = el('span', 'label');
-    const btn = button('', () => act((r) => order(r, c)));
-    const li = el('li');
-    li.append(label, btn);
-    buildList.append(li);
-    return { c, li, label, btn };
+    const btn = button('', () => act((r) => order(r, c, row.count)));
+    const row: BuildRow = { c, li: el('li'), label, btn, count: 1, picker: null };
+    const controls = el('span', 'controls');
+    if (CONSTRUCTION_INFO[c].max > 1 && !CONSTRUCTION_INFO[c].levelled) {
+      const { name } = CONSTRUCTION_INFO[c];
+      const less = button('−', () => (row.count = Math.max(1, row.count - 1)));
+      less.setAttribute('aria-label', `Build fewer ${name}s`);
+      const more = button('+', () => (row.count = Math.min(BUILD_MAX, row.count + 1)));
+      more.setAttribute('aria-label', `Build more ${name}s`);
+      const shown = el('span', 'count');
+      row.picker = { less, shown, more };
+      controls.append(less, shown, more);
+    }
+    controls.append(row.btn);
+    row.li.append(label, controls);
+    buildList.append(row.li);
+    return row;
   });
   const queueStatus = el('p', 'note');
   const queueList = el('ul', 'rows queue');
@@ -234,7 +261,8 @@ export function mountRealmPanels(
       setEnabled(more, realm.idle > 0);
     }
 
-    for (const { c, li, label, btn } of buildRows) {
+    for (const row of buildRows) {
+      const { c, li, label, btn, count } = row;
       const { name, levelled } = CONSTRUCTION_INFO[c];
       const have = built(realm, c);
       setText(label, levelled ? `${name} level ${have}` : `${name} ${have}`);
@@ -243,11 +271,19 @@ export function mountRealmPanels(
       const locked = needs.length > 0 && !atMax(realm, c);
       li.classList.toggle('locked', locked);
       const done = have >= CONSTRUCTION_INFO[c].max;
+      const price = `${formatCost(orderCost(realm, c, count))}; ${orderWork(realm, c, count)} work`;
       if (atMax(realm, c)) setText(btn, !done ? 'Queued' : levelled ? 'Top level' : 'Built');
       else if (locked) setText(btn, `Needs: ${needs.map(needText).join(', ')}`);
-      else setText(btn, `Order (${formatCost(orderCost(realm, c))}; ${orderWork(realm, c)} work)`);
+      else if (levelled) setText(btn, `Upgrade to level ${have + queued(realm, c) + 1} (${price})`);
+      else if (row.picker) setText(btn, `Build ${count} (${price})`);
+      else setText(btn, `Build (${price})`);
       setLabel(btn, `${btn.textContent} ${name}`);
-      setEnabled(btn, canOrder(realm, c));
+      setEnabled(btn, canOrder(realm, c, count));
+      if (row.picker) {
+        setText(row.picker.shown, `×${count}`);
+        setEnabled(row.picker.less, count > 1);
+        setEnabled(row.picker.more, count < BUILD_MAX);
+      }
     }
     const view = queueView(realm);
     setText(
@@ -271,7 +307,10 @@ export function mountRealmPanels(
     });
 
     const power = armyPower(realm);
-    setText(armyLine, `Army power ${Math.round(power)}`);
+    setText(
+      armyLine,
+      `Army power ${Math.round(power)} · Armed ${armedSoldiers(realm)} / ${realm.soldiers}`,
+    );
     setText(soldiersLabel, `Spearmen ${realm.soldiers}`);
     setEnabled(disbandBtn, realm.soldiers > 0);
     const barracks = realm.buildings.barracks > 0;
@@ -306,8 +345,8 @@ export function mountRealmPanels(
       setTraitText(
         row.info,
         v.scouted
-          ? `Power ${Math.round(v.power)} · ${traitLabel(v.trait)} · Win chance ${Math.round(winChance(power, v.power) * 100)}%`
-          : 'Power ? · Not scouted',
+          ? `${RIVAL_LEVEL_INFO[v.level].name} · Power ${Math.round(v.power)} · ${traitLabel(v.trait)} · Win chance ${Math.round(winChance(power, v.power) * 100)}%`
+          : 'Level ? · Power ? · Not scouted',
       );
       setEnabled(row.scoutBtn, !v.scouted && canAfford(realm, scoutGold));
       setEnabled(row.tributeBtn, v.hostile && canAfford(realm, tributeGold));

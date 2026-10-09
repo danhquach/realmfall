@@ -95,20 +95,23 @@ it empties.
 
 ## 5. Buildings
 
-Each building's cost and build work grow with how many you already own
-(n = number built plus number already queued), rounded up to a whole number.
-Buildings with a level (Storehouse, Wall, Defence tower) are built once and then
-upgraded; for them n is the level being ordered, minus 1, and each level can be
-queued only after the one below it is built or queued.
+Building more of something and upgrading something are different:
+
+- **Build more** (Hut, Market, Forge): every one costs the same and takes the
+  same build work as the first, however many you own.
+- **Upgrade** (Storehouse, Wall, Defence tower): built once, then raised level
+  by level. Each level costs more and does more. Cost and build work grow with
+  n = the level being ordered, minus 1, rounded up to a whole number, and each
+  level can be queued only after the one below it is built or queued.
 
 | Building | Cost | Build work | Needs | Effect |
 |---|---|---|---|---|
-| Hut | 25 × 1.3ⁿ wood | 20 × 1.2ⁿ | — | +5 housing |
-| Market | 40 × 1.5ⁿ wood, 30 × 1.5ⁿ gold | 40 × 1.2ⁿ | Storehouse level 1 | +1 gold/s |
+| Hut | 25 wood | 20 | — | +5 housing |
+| Market | 40 wood, 30 gold | 40 | Storehouse level 1 | +1 gold/s |
 | Barracks | 50 wood, 20 gold | 40 | 15 people | Trains Spearmen (§6) |
 | Archery range | 60 wood, 30 gold | 50 | Barracks | Trains Archers |
 | Stable | 80 wood, 10 iron, 40 gold | 60 | Barracks, a Horse pasture held (§8) | Trains Cavalry |
-| Forge | 60 × 2ⁿ wood, 20 × 2ⁿ iron | 60 × 1.2ⁿ | Barracks | +50% army power |
+| Forge | 60 wood, 20 iron | 60 | Barracks | +50% army power |
 | Wall (levels 1–5) | 50 × 2ⁿ wood, 15 × 2ⁿ iron | 40 × 2ⁿ | Barracks | Capital defence +20% per level (§7) |
 | Defence tower (levels 1–3) | 40 × 2ⁿ wood, 20 × 2ⁿ gold | 40 × 2ⁿ | Wall level 1 | Each level allows one more scout level (§7) |
 
@@ -293,13 +296,30 @@ learned about it (see Scouting).
   by its ring (table below), and its starting power is the ring's base power ×
   its level factor (Weak 0.5, Average 1, Strong 2, Elite 3). Ring 1's base is
   45, and each ring's base is 1.5× the last. The supply of rivals is endless.
-- Every rival gains +4% power per year.
+  Until map ring generation (§8) lands, a conquered rival is replaced by one
+  on the next ring out from it (up to ring 1,000).
+- Every rival grows by its level's rate each year and stops at its level's
+  power ceiling (Levels, below).
 
 ### Levels
 
 Rivals are not equal: each has a level, so you can pick a target your army can
-beat. The level sets the rival's defences. Growth rate and power ceiling per
-level are being tuned in #78.
+beat. The level sets the rival's growth, power ceiling and defences.
+
+| Level | Power factor | Ceiling | Growth/yr | Purpose |
+|---|---|---|---|---|
+| Weak | 0.5 | 2× start | 2% | Always beatable; the first conquest |
+| Average | 1 | 3× start | 3% | The mid-game goal |
+| Strong | 2 | 4× start | 4% | Needs conquests and traits first |
+| Elite | 3 | 5× start | 4% | Late game, outer rings |
+
+- **Ceiling:** a rival's power never goes above starting power × its level's
+  ceiling: not from yearly growth, a lost battle's +10% (Battle) or Golden age
+  (§9). Golden age raises the growth rate, not the ceiling. So time away (§14)
+  never makes the world unbeatable: after 8 hours every rival sits at its
+  ceiling, and the Weak starting rival tops out at 40, which 30 Spearmen with
+  2 Forges (120 power) beat 90% of the time.
+- **Starting rivals** have ceilings 40 (Weak), 135 (Average) and 360 (Strong).
 
 | Ring | Weak | Average | Strong | Elite |
 |---|---|---|---|---|
@@ -320,6 +340,21 @@ so two rivals of the same level can differ; only scouting tells them apart.
 
 A rival's wall works like yours (§5): +20% defence per level when you attack
 its capital, not its sites.
+
+**Checked with the balance runner** (`npm run sim`, seeds 1–5, 200 years,
+with the flat building costs of §5):
+
+- The first conquest comes on every seed, in years 27–34.
+- Strong rivals start out of reach: until the first conquest the scripted
+  player's best win chance against a Strong rival is at most 3%.
+- No rival ever goes above its ceiling.
+- Conquests keep coming: 12–15 per run. The longest stretch without one is
+  42–83 years, counting the years after the last, so **N = 83**: a stretch
+  longer than that means pacing has broken.
+- Army power keeps reaching new highs until late in the run (years 137–188),
+  ending at 1,500–1,860, and population reaches 670–870.
+- Every milestone of §9 that exists is reached on every seed: 50 people,
+  Storehouse level 3, repel 5 raids and win 10 battles.
 
 ### Actions
 
@@ -529,7 +564,7 @@ With 30 mixed soldiers (factor 1.1): 3 × 1.1 ≈ 3.3 years there, 3.3 back. Wit
 - The army doesn't defend the capital, so raids on the capital face only the
   soldiers left at home.
 - Marching units eat 1.5× food (supply lines).
-- The target keeps growing (+4% power per year), so the win chance shown when
+- The target keeps growing (its level's rate, up to its ceiling, §7), so the win chance shown when
   you send the army (known only once scouting has revealed enough, §7) is
   projected to the arrival year.
 - You can recall the army at any point. It turns back and takes as long to
@@ -549,7 +584,11 @@ beyond its resource bonus.
 
 The map grows in rings around your starting capital. When you hold a place on
 the outermost ring, a new ring is generated beyond it, with more rivals (ring
-base power 1.5× the previous ring, §7) and richer sites.
+base power 1.5× the previous ring, §7) and richer sites. Each new rival rolls
+its level by its ring's odds (§7 Levels), weighted towards stronger levels the
+farther out it is: ring 1 has no Strong or Elite rivals, ring 4 and beyond no
+Weak ones. Every level keeps its ceiling, so each ring's rivals stop growing
+too.
 
 ## 9. Traits
 
@@ -588,7 +627,7 @@ Royal and Mythic hold one trait each until the pool grows (§13, §14).
 | Poison archers | Noble | Archers +50% power | Spearmen −20% power |
 | Horse lords | Noble | Cavalry +50% power, march −25% | Cavalry upkeep +50% |
 | Warrior creed | Royal | Army power +30% | No population growth while at peace with every rival |
-| Golden age | Mythic | All production and tax +25% | Rivals gain +6% power per year instead of +4% |
+| Golden age | Mythic | All production and tax +25% | Rivals gain +2% more power per year (up to their ceiling, §7) |
 
 - A unit-type bonus applies to that unit type's power only.
 - Modifiers on the same stat add up: +50% and −20% make +30%.
@@ -749,7 +788,18 @@ lines stay in the Chronicle and count toward its 200-line cap.
      gone: in the first 80 years army power peaks at 0.35–0.72 of the
      weakest rival's, and an attack needs 1.22 (a 60% win chance). Before
      construction it peaked at 0.79–1.17. Rival levels and power ceilings
-     (#78) are what make the first conquest reachable.
+     (#78) are what make the first conquest reachable. With them in place, the
+     first conquest comes on every seed (§7 Levels).
+
+   Rival levels and flat building costs (#78). Levels and ceilings alone were
+   not enough: with Huts at 25 × 1.3ⁿ wood, population stopped at 120–170,
+   the army at 108–222 power, and conquests came 1–6 times in 200 years with
+   gaps of up to 132 years. Flat costs for Huts, Markets and Forges (§5) fixed
+   that (§7 Levels). Two things to watch in the pacing pass (#38):
+   - **Forges stack.** Each one adds +50% army power for the same 60 wood and
+     20 iron, so army power has no ceiling of its own. Late in a run the
+     scripted player has 1,500–1,860 power from only 5–11 soldiers.
+   - **Markets stack** the same way: +1 gold/s each at a flat price.
 8. **Early attacks are blind.** The win chance needs exact power and unit mix
    (scout level 3, so Defence tower 2), so the first attacks are made without
    it. Intended, but worth checking in play.

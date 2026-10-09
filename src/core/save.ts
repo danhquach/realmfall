@@ -1,9 +1,11 @@
 import {
+  BUILD_MAX,
   BUILDINGS,
   CHALLENGE,
   CHALLENGE_INFO,
   CHALLENGES,
   RIVAL,
+  RIVAL_LEVELS,
   CHRONICLE_KINDS,
   CHRONICLE_MAX,
   CONSTRUCTION_INFO,
@@ -21,6 +23,7 @@ import {
   TRAITS,
   TRAIT_INFO,
   TRAIT_RULES,
+  UPGRADES,
   YEAR_SECONDS,
   type Challenge,
   type ChronicleEntry,
@@ -35,7 +38,7 @@ import {
 } from './realm.ts';
 
 /** Bump when the saved shape changes; a save of any other version starts a new game. */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /**
  * Bounds that keep a hand-edited save from freezing the page: the simulation
@@ -61,7 +64,7 @@ export const SAVE_LIMITS = {
   /** Far past any reachable level; caps stay finite up to ~640. */
   storehouse: STOREHOUSE_MAX,
   rivals: 50,
-  ring: 1000,
+  ring: RIVAL.maxRing,
   nameChars: 40,
   textChars: 200,
 } as const;
@@ -144,13 +147,17 @@ function record<K extends string, V>(v: unknown, keys: readonly K[], read: (v: u
   return out;
 }
 
+/** A rival; its power may not be past its ceiling (§7). */
 function rival(v: unknown): Rival {
   const o = obj(v);
+  const ceiling = num(own(o, 'ceiling'), 0, RIVAL.maxPower);
   return {
     name: text(own(o, 'name'), NAME, SAVE_LIMITS.nameChars),
     ring: int(own(o, 'ring'), 1, SAVE_LIMITS.ring),
+    level: oneOf(own(o, 'level'), RIVAL_LEVELS),
     trait: oneOf(own(o, 'trait'), TRAITS),
-    power: num(own(o, 'power'), 0, RIVAL.maxPower),
+    power: num(own(o, 'power'), 0, ceiling),
+    ceiling,
     hostile: bool(own(o, 'hostile')),
     scouted: bool(own(o, 'scouted')),
   };
@@ -205,8 +212,12 @@ function order(v: unknown): Order {
     if (x !== undefined) cost[k] = num(x, 0, SAVE_LIMITS.amount);
   }
   const work = num(own(o, 'work'), Number.MIN_VALUE, SAVE_LIMITS.amount);
+  const building = oneOf(own(o, 'building'), CONSTRUCTIONS);
+  // A level is one order; anything else builds 1 to BUILD_MAX.
+  const most = CONSTRUCTION_INFO[building].levelled ? 1 : BUILD_MAX;
   return {
-    building: oneOf(own(o, 'building'), CONSTRUCTIONS),
+    building,
+    count: int(own(o, 'count'), 1, most),
     cost,
     work,
     done: num(own(o, 'done'), 0, work),
@@ -247,11 +258,14 @@ function realm(v: unknown): Realm {
   const buildings = record(own(o, 'buildings'), BUILDINGS, count);
   const storehouse = int(own(o, 'storehouse'), 0, SAVE_LIMITS.storehouse);
   const queue = arr(own(o, 'queue'), QUEUE_MAX).map(order);
-  // Built plus queued stays within each building's max (one Barracks, Wall 5, tower 3).
+  // Huts, Markets and Forges levels start at 1.
+  for (const c of UPGRADES) if (buildings[c] < 1) fail();
+  // Built plus queued stays within each building's max (one Barracks, Wall 5, levels 5).
   for (const c of CONSTRUCTIONS) {
     const max = CONSTRUCTION_INFO[c].max;
     const have = c === 'storehouse' ? storehouse : buildings[c];
-    if (have + queue.filter((q) => q.building === c).length > max) fail();
+    const ordered = queue.reduce((sum, q) => (q.building === c ? sum + q.count : sum), 0);
+    if (have + ordered > max) fail();
   }
   return {
     seed: int(own(o, 'seed'), 0, 0xffffffff),
