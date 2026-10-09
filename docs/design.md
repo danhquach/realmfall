@@ -492,6 +492,9 @@ first two rings) plus save and offline progress.
 - Simulation separate from UI: a pure `tick(state, dt)` function, so balance
   can be tested and offline time simulated without rendering.
 - Unit tests on the simulation (Vitest).
+- `npm run sim` plays a run headless with a simple scripted strategy and prints
+  stores, population, army and conquests per year (`--years N`, `--seed N`;
+  default 100 years on seed 1), to compare balance changes run against run.
 
 ## 17. Future upgrades (not planned)
 
