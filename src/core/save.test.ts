@@ -15,7 +15,7 @@ import {
   type Realm,
 } from './realm.ts';
 import { createRng } from './rng.ts';
-import { SAVE_LIMITS, SAVE_VERSION, parse, serialize } from './save.ts';
+import { SAVE_LIMITS, SAVE_VERSION, parse, parseSave, serialize } from './save.ts';
 
 /** A realm some way into a run: jobs, buildings, soldiers, traits, battles and a Chronicle. */
 function played(): Realm {
@@ -246,6 +246,50 @@ describe('parse against prototype pollution', () => {
     } finally {
       delete proto.soldiers;
     }
+  });
+});
+
+describe('save timestamp', () => {
+  it('round-trips savedAt', () => {
+    const realm = played();
+    expect(parseSave(serialize(realm, 1_800_000_000_123))).toEqual({
+      realm,
+      savedAt: 1_800_000_000_123,
+    });
+    expect(parseSave(serialize(realm, 0))!.savedAt).toBe(0);
+  });
+
+  it('loads a save without a stamp with savedAt null', () => {
+    const realm = played();
+    expect(parseSave(serialize(realm))).toEqual({ realm, savedAt: null });
+  });
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['past the last Date', 8.64e15 + 1],
+    ['huge', 1e300],
+    ['a string', '1800000000000'],
+    ['null', null],
+    ['an object', { valueOf: 1 }],
+    ['an array', [1]],
+    ['true', true],
+  ])('rejects a %s savedAt', (_, savedAt) => {
+    const save = JSON.stringify({ version: SAVE_VERSION, savedAt, realm: saved().realm });
+    expect(parseSave(save)).toBeNull();
+    expect(parse(save)).toBeNull();
+  });
+
+  it('rejects a savedAt JSON reads as Infinity', () => {
+    const save = serialize(played(), 123456789).replace('123456789', '1e999');
+    expect(parseSave(save)).toBeNull();
+  });
+
+  it('ignores a savedAt inherited from a polluted prototype', () => {
+    const save = `{"__proto__":{"savedAt":5},"version":${SAVE_VERSION},"realm":${JSON.stringify(saved().realm)}}`;
+    const loaded = parseSave(save)!;
+    expect(loaded.savedAt).toBeNull();
+    expect(({} as Record<string, unknown>).savedAt).toBeUndefined();
   });
 });
 
