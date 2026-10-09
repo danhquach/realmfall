@@ -458,10 +458,12 @@ lines stay in the Chronicle and count toward its 200-line cap.
 
 Ordered by how much they add to the endless loop:
 
-1. **Save and offline progress.** Autosave to localStorage. On return,
-   simulate the time away (capped, e.g. 8 h) in the same fixed 0.25 s steps as
-   live play, so store caps, growth and hunger behave exactly as they would
-   online, and write a Chronicle summary.
+1. **Save and offline progress.** Autosave to localStorage every 10 s, after
+   each player action and when the page is hidden. The save is versioned; a
+   save that is missing, of another version or fails validation starts a new
+   game. On return, simulate the time away (capped, e.g. 8 h) in the same fixed
+   0.25 s steps as live play, so store caps, growth and hunger behave exactly
+   as they would online, and write a Chronicle summary.
 2. **Bigger trait pool and trait synergies.** More traits per tier, and some
    pairs of slotted traits combine into a stronger effect (e.g. Dwarven smiths
    + Horse lords → Ironclad cavalry).

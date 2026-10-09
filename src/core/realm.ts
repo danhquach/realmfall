@@ -246,7 +246,14 @@ export const RIVAL = {
   startingRings: [1, 1, 2],
   hostileChance: 0.6,
   growthPerYear: 0.04,
+  /** Power stops growing here, far past any fight, so it never reaches Infinity and breaks the save. */
+  maxPower: 1e300,
 } as const;
+
+/** `power` held at RIVAL.maxPower. */
+function capPower(power: number): number {
+  return Math.min(power, RIVAL.maxPower);
+}
 
 const NAME_HEADS = [
   'Ash',
@@ -328,7 +335,7 @@ export function startingRivals(seed: number): Rival[] {
 /** One year of rival growth: every rival's power × 1.04, or × 1.06 under Golden age (§7, §9). */
 export function growRivals(realm: Realm): Realm {
   const by = 1 + RIVAL.growthPerYear + traitModifiers(realm).rivalGrowth;
-  return { ...realm, rivals: realm.rivals.map((r) => ({ ...r, power: r.power * by })) };
+  return { ...realm, rivals: realm.rivals.map((r) => ({ ...r, power: capPower(r.power * by) })) };
 }
 
 /** Gold prices of the rival actions (docs/design.md §7). */
@@ -427,7 +434,7 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
     const lost = Math.ceil(realm.soldiers * BATTLE.defeatLoss);
     const next = updateRival({ ...realm, soldiers: realm.soldiers - lost }, index, (r) => ({
       ...r,
-      power: r.power * (1 + BATTLE.defeatRivalGrowth),
+      power: capPower(r.power * (1 + BATTLE.defeatRivalGrowth)),
       hostile: true,
     }));
     return chronicle(next, 'battles', `Lost a battle against ${rival.name}: ${fell(lost)}.`);
@@ -439,7 +446,7 @@ export function attack(realm: Realm, index: number, rng: Rng): Realm {
   const rest = realm.rivals.filter((_, i) => i !== index);
   const taken = new Set([rival.name, ...rest.map((r) => r.name)]);
   const ring = Math.max(...realm.rivals.map((r) => r.ring)) + 1;
-  const fresh = createRival(rng, strongest * BATTLE.nextRivalScale, ring, taken);
+  const fresh = createRival(rng, capPower(strongest * BATTLE.nextRivalScale), ring, taken);
   const annexed: Realm = {
     ...realm,
     soldiers: realm.soldiers - lost,
