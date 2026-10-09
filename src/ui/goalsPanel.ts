@@ -8,7 +8,7 @@ import {
 import { el, panel, setText } from './dom.ts';
 
 /**
- * Builds the Goals panel (docs/design.md §9) at the front of `panels` once,
+ * Builds the Goals panel (docs/design.md §9) inside `panels` once,
  * and returns the function that refreshes it from a realm: the "Next" hint,
  * every milestone with its progress or ✓, and the challenge line shared with
  * the Traits panel.
@@ -34,7 +34,7 @@ export function mountGoalsPanel(panels: HTMLElement): (realm: Realm) => void {
     el('h3', undefined, 'Challenge'),
     challengeLine,
   );
-  panels.prepend(section);
+  panels.append(section);
 
   return (realm) => {
     setText(next, nextGoal(realm));
