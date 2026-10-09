@@ -1,6 +1,7 @@
 import { advance, parseSpeed } from './core/loop.ts';
-import { createRealm } from './core/realm.ts';
+import { createRealm, type Realm } from './core/realm.ts';
 import { createRng } from './core/rng.ts';
+import { mountChronicle } from './ui/chronicle.ts';
 import { mountRealmPanels } from './ui/realmPanels.ts';
 
 const root = document.getElementById('app');
@@ -22,7 +23,7 @@ if (speed > 1) {
   root.append(note);
 }
 
-const render = mountRealmPanels(
+const renderPanels = mountRealmPanels(
   root,
   (change) => {
     realm = change(realm);
@@ -30,6 +31,12 @@ const render = mountRealmPanels(
   },
   battleRng,
 );
+const renderChronicle = mountChronicle(root);
+
+function render(next: Realm): void {
+  renderPanels(next);
+  renderChronicle(next);
+}
 
 // Fixed-step loop: real time (scaled by speed) accumulates and the simulation
 // consumes it in whole STEP-sized ticks, whatever the frame rate.
