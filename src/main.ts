@@ -1,4 +1,4 @@
-import { advance, catchUp, parseSpeed } from './core/loop.ts';
+import { catchUp, parseSpeed, play } from './core/loop.ts';
 import { createRealm, type Realm } from './core/realm.ts';
 import { createRng } from './core/rng.ts';
 import { mountChronicle } from './ui/chronicle.ts';
@@ -52,14 +52,14 @@ function render(next: Realm): void {
 }
 
 // Fixed-step loop: real time (scaled by speed) accumulates and the simulation
-// consumes it in whole STEP-sized ticks, whatever the frame rate.
+// consumes it in whole STEP-sized ticks, whatever the frame rate. A background
+// tab gets no frames, so its return is one long gap, replayed as time away.
 let pending = 0;
 let last = performance.now();
 
 function frame(now: number): void {
-  pending += ((now - last) / 1000) * speed;
+  ({ realm, pending } = play(realm, pending, (now - last) / 1000, speed));
   last = now;
-  ({ realm, pending } = advance(realm, pending));
   render(realm);
   requestAnimationFrame(frame);
 }
