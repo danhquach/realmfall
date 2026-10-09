@@ -1,3 +1,4 @@
+/** Soldiers, weapons and army power (docs/design.md §6). */
 import { WALL_BONUS } from './buildings.ts';
 import { type Cost, type Realm, type Resource } from './model.ts';
 import { wholeCount } from './people.ts';

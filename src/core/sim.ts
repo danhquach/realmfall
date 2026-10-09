@@ -1,6 +1,7 @@
 import { advance } from './loop.ts';
 import {
   BATTLE,
+  armedSoldiers,
   armyPower,
   assign,
   attack,
@@ -49,6 +50,10 @@ export const STRATEGY = {
   storeFull: 0.9,
   /** Soldiers needed before a Forge or a Wall level is worth building. */
   forgeAfter: 10,
+  /** Soldiers each Forge arms: one more Forge per this many soldiers. */
+  soldiersPerForge: 10,
+  /** Huts or Markets owned before their next level is worth buying. */
+  upgradeAfter: 10,
   /** People per builder kept on the job (at least one). */
   peoplePerBuilder: 7,
 } as const;
@@ -97,14 +102,22 @@ function slotTraits(realm: Realm): Realm {
 /**
  * Orders, one of each at a time: a Hut when housing is one Hut from full, a Storehouse
  * level when a store is nearly capped, the Barracks once unlocked, then a
- * Market, then a Forge and a Wall level once the army is big enough. Each is
- * ordered only while none of its kind is queued, so the queue never clogs.
+ * Market, then a Forge per STRATEGY.soldiersPerForge soldiers and a Wall level
+ * once the army is big enough. The next Huts or Markets level comes once
+ * STRATEGY.upgradeAfter of them stand, and the next Forges level once every
+ * soldier is armed. Each is ordered only while none of its kind is queued, so
+ * the queue never clogs.
  */
 function buildUp(realm: Realm): Realm {
   const once = (c: Construction) => (queued(realm, c) === 0 ? order(realm, c) : realm);
   realm = once('barracks');
   if (population(realm) + PEOPLE.hutHousing >= housingCap(realm)) realm = once('hut');
-  if (realm.soldiers >= STRATEGY.forgeAfter) realm = once('forge');
+  const { soldiers, buildings } = realm;
+  if (soldiers >= STRATEGY.forgeAfter && buildings.forge * STRATEGY.soldiersPerForge < soldiers)
+    realm = once('forge');
+  if (buildings.forge > 0 && armedSoldiers(realm) === soldiers) realm = once('forgeLevel');
+  if (buildings.hut >= STRATEGY.upgradeAfter) realm = once('hutLevel');
+  if (buildings.market >= STRATEGY.upgradeAfter) realm = once('marketLevel');
   const caps = storeCaps(realm);
   if (RESOURCES.some((k) => realm.stores[k] >= caps[k] * STRATEGY.storeFull))
     realm = once('storehouse');

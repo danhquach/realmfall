@@ -1,3 +1,4 @@
+/** People, jobs, food and the per-second rates of every store (docs/design.md §3, §4). */
 import { FORGE } from './army.ts';
 import { upgradeBonus } from './buildings.ts';
 import { type Job, JOBS, type Realm, type Resource } from './model.ts';

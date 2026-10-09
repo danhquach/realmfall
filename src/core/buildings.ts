@@ -1,3 +1,4 @@
+/** Buildings, upgrades and the construction queue (docs/design.md §5). */
 import { chronicle } from './chronicle.ts';
 import { type Construction, type Cost, type Order, type Realm, RESOURCES } from './model.ts';
 import { PEOPLE, population, shortfall } from './people.ts';
@@ -171,14 +172,14 @@ function nextN(realm: Realm, c: Construction): number {
 
 /**
  * How many the next order of `c` builds when `count` are asked for: 1 for a
- * level, else `count` kept to 1..BUILD_MAX and to what is left below its max.
- * 0 when `count` is not a whole number of at least 1.
+ * level, else `count` kept to BUILD_MAX; either way no more than is left below
+ * its max. 0 when `count` is not a whole number of at least 1, or at the max.
  */
 function orderCount(realm: Realm, c: Construction, count: number): number {
   if (!Number.isInteger(count) || count < 1) return 0;
   const { levelled, max } = CONSTRUCTION_INFO[c];
-  if (levelled) return 1;
-  return Math.max(0, Math.min(count, BUILD_MAX, max - nextN(realm, c)));
+  const room = max - nextN(realm, c);
+  return Math.max(0, Math.min(levelled ? 1 : count, BUILD_MAX, room));
 }
 
 /**

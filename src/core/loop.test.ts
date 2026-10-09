@@ -94,7 +94,7 @@ describe('advance', () => {
 function busy(seed: number): Realm {
   const realm = createRealm(seed);
   const jobs = { farmer: 0, woodcutter: 8, miner: 1, builder: 0 };
-  const stores = { food: 50, wood: 190, iron: 20, gold: 100 };
+  const stores = { food: 50, wood: 190, iron: 20, gold: 100, weapons: 0 };
   const rivals = realm.rivals.map((r, i) => ({ ...r, hostile: i === 0 }));
   const buildings = { ...realm.buildings, barracks: 1 };
   return train({ ...realm, jobs, idle: 1, stores, rivals, buildings }, 1);
@@ -431,12 +431,12 @@ describe('awaySummary', () => {
     const before = busy(1);
     const after = {
       ...before,
-      stores: { food: 0, wood: 250.6, iron: 15.4, gold: 145 },
+      stores: { food: 0, wood: 250.6, iron: 15.4, gold: 145, weapons: 0 },
       idle: before.idle + 2,
       soldiers: 0,
     };
     expect(awaySummary(after, before, 2 * 3600 + 5 * 60 + 59).chronicle.at(-1)!.text).toBe(
-      'Away 2h 5m: food -50, wood +61, iron +0, gold +55; people 10 to 11; soldiers 1 to 0; ' +
+      'Away 2h 5m: food -50, wood +61, iron +0, gold +55, weapons +0; people 10 to 11; soldiers 1 to 0; ' +
         '0 events, 0 trader restocks; at peace.',
     );
   });
@@ -446,7 +446,7 @@ describe('awaySummary', () => {
     const huge = SAVE_LIMITS.amount;
     const after = {
       ...before,
-      stores: { food: huge, wood: huge, iron: huge, gold: huge },
+      stores: { food: huge, wood: huge, iron: huge, gold: huge, weapons: 0 },
       idle: SAVE_LIMITS.count,
       soldiers: SAVE_LIMITS.count,
     };
@@ -462,7 +462,7 @@ describe('awaySummary', () => {
     const huge = SAVE_LIMITS.amount;
     const before = {
       ...createRealm(1),
-      stores: { food: huge, wood: huge, iron: huge, gold: huge },
+      stores: { food: huge, wood: huge, iron: huge, gold: huge, weapons: 0 },
       idle: SAVE_LIMITS.count,
       soldiers: SAVE_LIMITS.count,
     };
@@ -477,7 +477,7 @@ describe('awaySummary', () => {
       soldiers: 0,
       traderYear: 1,
       chronicle: events,
-      stores: { food: 0, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 },
     };
     const realm = awaySummary(after, before, MAX_CATCHUP);
     const { text } = realm.chronicle.at(-1)!;

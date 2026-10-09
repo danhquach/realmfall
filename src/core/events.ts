@@ -1,3 +1,4 @@
+/** Random events and the good events of time away (docs/design.md §10, §11). */
 import { createRng, int, pick, type Rng } from './rng.ts';
 import { chronicle } from './chronicle.ts';
 import { type Realm, type Resource } from './model.ts';

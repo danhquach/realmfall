@@ -1,3 +1,4 @@
+/** Battles against rivals and raids on the capital (docs/design.md §7). */
 import { chance, createRng, pick, type Rng } from './rng.ts';
 import { armyPower, capitalDefence, weaponsLost } from './army.ts';
 import { chronicle, fell } from './chronicle.ts';

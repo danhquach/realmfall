@@ -1,3 +1,4 @@
+/** Stores, their caps and the Storehouse levels that set them (docs/design.md §3, §5). */
 import { type Cost, type Realm, type Resource, RESOURCES } from './model.ts';
 
 /** Store `k` after adding `amount`, stopped at its cap but never lowering a store already over it. */

@@ -1,3 +1,4 @@
+/** The realm's shape: its stores, jobs, buildings, traits, rivals and Chronicle, as plain data (docs/design.md). */
 /** The stores (docs/design.md §3); weapons are made by Forges (§5, §6). */
 export const RESOURCES = ['food', 'wood', 'iron', 'gold', 'weapons'] as const;
 

@@ -1,3 +1,4 @@
+/** The simulation's public face: createRealm(), tick() and every core module re-exported, so callers import from here. */
 export * from './model.ts';
 export * from './traits.ts';
 export * from './goals.ts';

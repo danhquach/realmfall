@@ -1,3 +1,4 @@
+/** Traits: tiers, effects, slots, upgrades and sales (docs/design.md §9). */
 import { createRng, pick, type Rng } from './rng.ts';
 import { chronicle } from './chronicle.ts';
 import {

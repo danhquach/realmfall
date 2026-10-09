@@ -8,6 +8,16 @@ import {
   STOREHOUSE,
   STOREHOUSE_MAX,
   TIER_INFO,
+  UPGRADE_MAX,
+  BUILD_MAX,
+  atMax,
+  construct,
+  FORGE,
+  armedSoldiers,
+  loseOne,
+  upgradeBonus,
+  weaponBonus,
+  weaponsLost,
   TRAIT_INFO,
   TRAITS,
   armyPower,
@@ -55,7 +65,6 @@ import {
   createRival,
   growRivals,
   disband,
-  forgeBonus,
   gainTrait,
   housingCap,
   pay,
@@ -199,9 +208,12 @@ describe('createRealm', () => {
     expect(realm.year).toBe(1);
     expect(realm.buildings).toEqual({
       hut: 0,
+      hutLevel: 1,
       market: 0,
+      marketLevel: 1,
       barracks: 0,
       forge: 0,
+      forgeLevel: 1,
       wall: 0,
       tower: 0,
     });
@@ -407,7 +419,7 @@ describe('growth (design §4)', () => {
     // 2 farmers feed 6 civilians exactly: food holds at 5.
     const hungry = {
       ...createRealm(1),
-      stores: { food: 5, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 5, wood: 0, iron: 0, gold: 0, weapons: 0 },
       jobs: { farmer: 2, woodcutter: 0, miner: 0, builder: 1 },
     };
     expect(run(hungry, 20).idle).toBe(3);
@@ -425,7 +437,7 @@ describe('growth (design §4)', () => {
     // 3 farmers feed 9 civilians exactly: food holds at 5.01.
     const fed = {
       ...createRealm(1),
-      stores: { food: 5.01, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 5.01, wood: 0, iron: 0, gold: 0, weapons: 0 },
       idle: 4,
       jobs: { farmer: 3, woodcutter: 2, miner: 0, builder: 0 },
     };
@@ -437,7 +449,7 @@ describe('growth (design §4)', () => {
     // No farmers: 6 civilians eat 3 food/s, so 5.5 food drops to 4.75 in one step.
     const hungry = {
       ...createRealm(1),
-      stores: { food: 5.5, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 5.5, wood: 0, iron: 0, gold: 0, weapons: 0 },
       jobs: { farmer: 0, woodcutter: 2, miner: 0, builder: 1 },
       growth: 3,
     };
@@ -461,7 +473,7 @@ describe('growth (design §4)', () => {
 
 describe('starvation (design §4)', () => {
   const run = untimed;
-  const empty = { food: 0, wood: 0, iron: 0, gold: 1000 };
+  const empty = { food: 0, wood: 0, iron: 0, gold: 1000, weapons: 0 };
 
   it('s is 0 while any food is left or production covers what is eaten', () => {
     expect(shortfall(createRealm(1))).toBe(0);
@@ -595,7 +607,7 @@ describe('starvation (design §4)', () => {
   it('never drives a store below zero or a headcount below zero', () => {
     const doomed = {
       ...createRealm(1),
-      stores: { food: 0, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 },
       jobs: { farmer: 0, woodcutter: 2, miner: 2, builder: 0 },
       soldiers: 3,
     };
@@ -616,7 +628,7 @@ describe('desertion (design §6)', () => {
   // A full house (15 of 15), food to spare and no tax: no growth, no hunger, no income.
   const broke = {
     ...createRealm(1),
-    stores: { food: 10000, wood: 0, iron: 0, gold: 0 },
+    stores: { food: 10000, wood: 0, iron: 0, gold: 0, weapons: 0 },
     jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 },
     idle: 9,
     soldiers: 6,
@@ -681,12 +693,15 @@ describe('store caps (design §3)', () => {
       jobs: { farmer: 20, woodcutter: 10, miner: 10, builder: 0 },
     };
     const next = untimed(realm, 1000);
-    expect(next.stores).toEqual({ food: 200, wood: 200, iron: 50, gold: 150 });
+    expect(next.stores).toEqual({ food: 200, wood: 200, iron: 50, gold: 150, weapons: 0 });
     expect(untimed(next, 10).stores).toEqual(next.stores);
   });
 
   it('clamps a store already over its cap down to the cap', () => {
-    const over = { ...createRealm(1), stores: { food: 900, wood: 900, iron: 900, gold: 900 } };
+    const over = {
+      ...createRealm(1),
+      stores: { food: 900, wood: 900, iron: 900, gold: 900, weapons: 900 },
+    };
     expect(tick(over, 0.25).stores).toEqual(storeCaps(over));
   });
 
@@ -710,16 +725,16 @@ describe('Storehouse (design §5)', () => {
 
   it('matches the design table for levels 0–3', () => {
     expect(STOREHOUSE.map((l) => l.caps)).toEqual([
-      { food: 200, wood: 200, iron: 50, gold: 150 },
-      { food: 500, wood: 600, iron: 120, gold: 400 },
-      { food: 1500, wood: 2000, iron: 400, gold: 1200 },
-      { food: 5000, wood: 6000, iron: 1200, gold: 4000 },
+      { food: 200, wood: 200, iron: 50, gold: 150, weapons: 20 },
+      { food: 500, wood: 600, iron: 120, gold: 400, weapons: 60 },
+      { food: 1500, wood: 2000, iron: 400, gold: 1200, weapons: 200 },
+      { food: 5000, wood: 6000, iron: 1200, gold: 4000, weapons: 600 },
     ]);
     expect(STOREHOUSE.map((l) => l.safe)).toEqual([
-      { food: 0, wood: 0, iron: 0, gold: 0 },
-      { food: 50, wood: 60, iron: 12, gold: 40 },
-      { food: 200, wood: 250, iron: 50, gold: 150 },
-      { food: 750, wood: 900, iron: 180, gold: 600 },
+      { food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 },
+      { food: 50, wood: 60, iron: 12, gold: 40, weapons: 0 },
+      { food: 200, wood: 250, iron: 50, gold: 150, weapons: 0 },
+      { food: 750, wood: 900, iron: 180, gold: 600, weapons: 0 },
     ]);
     expect(STOREHOUSE.map((l) => l.cost)).toEqual([
       {},
@@ -731,11 +746,12 @@ describe('Storehouse (design §5)', () => {
 
   it('multiplies caps, safe amounts and cost by 3 at level 4, and again at 5', () => {
     expect(storehouseLevel(4)).toEqual({
-      caps: { food: 15000, wood: 18000, iron: 3600, gold: 12000 },
-      safe: { food: 2250, wood: 2700, iron: 540, gold: 1800 },
+      caps: { food: 15000, wood: 18000, iron: 3600, gold: 12000, weapons: 1800 },
+      safe: { food: 2250, wood: 2700, iron: 540, gold: 1800, weapons: 0 },
       cost: { wood: 1800, iron: 360, gold: 300 },
     });
     expect(storehouseLevel(5).caps.food).toBe(45000);
+    expect(storehouseLevel(5).caps.weapons).toBe(5400);
     expect(storehouseLevel(5).cost).toEqual({ wood: 5400, iron: 1080, gold: 900 });
   });
 
@@ -752,7 +768,8 @@ describe('Storehouse (design §5)', () => {
       for (const k of RESOURCES) {
         expect(ordered.stores[k]).toBe(before.stores[k] - (cost[k] ?? 0));
         expect(storeCaps(after)[k]).toBeGreaterThan(storeCaps(before)[k]);
-        expect(safeAmounts(after)[k]).toBeGreaterThan(safeAmounts(before)[k]);
+        // Raids never take weapons, so their safe amount stays 0.
+        if (k !== 'weapons') expect(safeAmounts(after)[k]).toBeGreaterThan(safeAmounts(before)[k]);
       }
     }
   });
@@ -772,20 +789,20 @@ describe('Storehouse (design §5)', () => {
 
   it('charges 60 wood for level 1', () => {
     const after = order(
-      { ...createRealm(1), stores: { food: 0, wood: 60, iron: 0, gold: 0 } },
+      { ...createRealm(1), stores: { food: 0, wood: 60, iron: 0, gold: 0, weapons: 0 } },
       'storehouse',
     );
     expect(after.queue).toEqual([
-      { building: 'storehouse', cost: { wood: 60 }, work: 30, done: 0 },
+      { building: 'storehouse', count: 1, cost: { wood: 60 }, work: 30, done: 0 },
     ]);
     expect(after.stores.wood).toBe(0);
   });
 
   it("can't upgrade without the stores", () => {
-    const poor = { ...createRealm(1), stores: { food: 0, wood: 59, iron: 0, gold: 0 } };
+    const poor = { ...createRealm(1), stores: { food: 0, wood: 59, iron: 0, gold: 0, weapons: 0 } };
     expect(order(poor, 'storehouse')).toBe(poor);
     // Level 2 needs iron too: wood alone isn't enough.
-    const noIron = { ...rich(1), stores: { food: 0, wood: 600, iron: 29, gold: 0 } };
+    const noIron = { ...rich(1), stores: { food: 0, wood: 600, iron: 29, gold: 0, weapons: 0 } };
     expect(order(noIron, 'storehouse')).toBe(noIron);
   });
 
@@ -797,7 +814,7 @@ describe('Storehouse (design §5)', () => {
   });
 
   it('gives no safe amount at level 0', () => {
-    expect(safeAmounts(createRealm(1))).toEqual({ food: 0, wood: 0, iron: 0, gold: 0 });
+    expect(safeAmounts(createRealm(1))).toEqual({ food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 });
   });
 });
 
@@ -810,6 +827,7 @@ describe('canAfford / pay', () => {
       wood: 0,
       iron: 10,
       gold: 0,
+      weapons: 0,
     });
     expect(canAfford(realm, { wood: 40, iron: 11 })).toBe(false);
     expect(pay(realm, { wood: 40, iron: 11 })).toBe(realm);
@@ -913,19 +931,13 @@ describe('buildings (design §5)', () => {
     expect(rates(owning('market', 3)).gold).toBeCloseTo(base + 3);
     const starving = {
       ...owning('market', 2),
-      stores: { food: 0, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 },
       soldiers: 100,
     };
     const s = shortfall(starving);
     expect(s).toBeGreaterThan(0);
     // 7 workers: 4 farmers, 2 woodcutters and the builder.
     expect(rates(starving).gold).toBeCloseTo(7 * 0.25 * (1 - s) + 2 - 100 * 0.5);
-  });
-
-  it('Forge adds +50% army power each', () => {
-    expect(forgeBonus(createRealm(1))).toBe(1);
-    expect(forgeBonus(owning('forge', 1))).toBe(1.5);
-    expect(forgeBonus(owning('forge', 3))).toBe(2.5);
   });
 });
 
@@ -937,7 +949,7 @@ describe('construction queue (design §5)', () => {
       ...realm,
       idle: 0,
       jobs: { ...realm.jobs, builder: builders },
-      stores: { food: 200, wood: 200, iron: 50, gold: 150 },
+      stores: { food: 200, wood: 200, iron: 50, gold: 150, weapons: 0 },
     };
   };
   /** `seconds` of play in the loop's 0.25 s steps. */
@@ -981,7 +993,7 @@ describe('construction queue (design §5)', () => {
     const starving = {
       ...crew(4),
       jobs: { farmer: 1, woodcutter: 2, miner: 0, builder: 4 },
-      stores: { food: 0, wood: 200, iron: 50, gold: 150 },
+      stores: { food: 0, wood: 200, iron: 50, gold: 150, weapons: 0 },
     };
     const s = shortfall(starving);
     expect(s).toBeGreaterThan(0);
@@ -992,13 +1004,17 @@ describe('construction queue (design §5)', () => {
     const camp = { ...crew(1), buildings: { ...crew(1).buildings, barracks: 1 } };
     const realm = order(camp, 'wall');
     const more = { ...realm, buildings: { ...realm.buildings, wall: 3 } };
-    const first = { building: 'wall', cost: { wood: 50, iron: 15 }, work: 40, done: 0 };
+    const first = { building: 'wall', count: 1, cost: { wood: 50, iron: 15 }, work: 40, done: 0 };
     expect(more.queue[0]).toEqual(first);
     expect(orderCost(more, 'wall')).toEqual({ wood: 50 * 2 ** 4, iron: 15 * 2 ** 4 });
   });
 
   it(`refuses order ${QUEUE_MAX + 1}`, () => {
-    let realm = { ...crew(1), storehouse: 3, stores: { food: 0, wood: 6000, iron: 0, gold: 0 } };
+    let realm = {
+      ...crew(1),
+      storehouse: 3,
+      stores: { food: 0, wood: 6000, iron: 0, gold: 0, weapons: 0 },
+    };
     for (let i = 0; i < QUEUE_MAX; i++) realm = order(realm, 'hut');
     expect(realm.queue).toHaveLength(QUEUE_MAX);
     expect(canOrder(realm, 'hut')).toBe(false);
@@ -1023,7 +1039,7 @@ describe('construction queue (design §5)', () => {
     let realm = withBarracks({
       ...crew(1),
       storehouse: 1,
-      stores: { food: 0, wood: 400, iron: 100, gold: 0 },
+      stores: { food: 0, wood: 400, iron: 100, gold: 0, weapons: 0 },
     });
     realm = order(realm, 'wall'); // level 1: 50 wood, 15 iron
     realm = order(realm, 'hut');
@@ -1042,7 +1058,7 @@ describe('construction queue (design §5)', () => {
     let realm = withBarracks({
       ...crew(1),
       storehouse: 2,
-      stores: { food: 0, wood: 2000, iron: 400, gold: 0 },
+      stores: { food: 0, wood: 2000, iron: 400, gold: 0, weapons: 0 },
     });
     realm = order(order(realm, 'wall'), 'wall');
     expect(cancelOrder(realm, 1).queue).toEqual([realm.queue[0]]);
@@ -1079,7 +1095,7 @@ describe('construction queue (design §5)', () => {
       ...crew(1),
       idle: 20,
       storehouse: 1,
-      stores: { food: 0, wood: 600, iron: 120, gold: 400 },
+      stores: { food: 0, wood: 600, iron: 120, gold: 400, weapons: 0 },
     };
     for (const c of ['forge', 'wall'] as const) {
       expect(unmetNeeds(big, c).map(needText)).toEqual(['Barracks']);
@@ -1092,7 +1108,7 @@ describe('construction queue (design §5)', () => {
     const big = withBarracks({
       ...crew(1),
       storehouse: 1,
-      stores: { food: 0, wood: 600, iron: 120, gold: 400 },
+      stores: { food: 0, wood: 600, iron: 120, gold: 400, weapons: 0 },
     });
     expect(unmetNeeds(big, 'tower').map(needText)).toEqual(['Wall level 1']);
     const queuedWall = order(big, 'wall');
@@ -1117,7 +1133,7 @@ describe('construction queue (design §5)', () => {
       ...crew(1),
       idle: 20,
       storehouse: 6,
-      stores: { food: 0, wood: 1e5, iron: 1e5, gold: 1e5 },
+      stores: { food: 0, wood: 1e5, iron: 1e5, gold: 1e5, weapons: 0 },
     };
     const one = order(rich, 'barracks');
     expect(canOrder(one, 'barracks')).toBe(false);
@@ -1132,9 +1148,12 @@ describe('construction queue (design §5)', () => {
     expect(finishAll(realm).buildings.tower).toBe(3);
     expect(CONSTRUCTIONS.map((c) => CONSTRUCTION_INFO[c].max)).toEqual([
       Infinity,
+      UPGRADE_MAX,
       Infinity,
+      UPGRADE_MAX,
       1,
       Infinity,
+      UPGRADE_MAX,
       5,
       3,
       STOREHOUSE_MAX,
@@ -1142,7 +1161,10 @@ describe('construction queue (design §5)', () => {
   });
 
   it(`stops the Storehouse at level ${STOREHOUSE_MAX}, queued levels counting`, () => {
-    const rich = { ...crew(1), stores: { food: 0, wood: 1e300, iron: 1e300, gold: 1e300 } };
+    const rich = {
+      ...crew(1),
+      stores: { food: 0, wood: 1e300, iron: 1e300, gold: 1e300, weapons: 0 },
+    };
     const ordered = order({ ...rich, storehouse: STOREHOUSE_MAX - 1 }, 'storehouse');
     expect(ordered.queue).toHaveLength(1);
     expect(canOrder(ordered, 'storehouse')).toBe(false);
@@ -1183,7 +1205,7 @@ describe('soldiers and army power (design §6)', () => {
     const rich = {
       ...createRealm(1),
       idle: 20,
-      stores: { food: 0, wood: 200, iron: 50, gold: 150 },
+      stores: { food: 0, wood: 200, iron: 50, gold: 150, weapons: 0 },
     };
     expect(train(rich)).toBe(rich);
     const queued = order(rich, 'barracks');
@@ -1255,13 +1277,10 @@ describe('soldiers and army power (design §6)', () => {
     expect(rates(disband(train(realm, 3), 3))).toEqual(before);
   });
 
-  it('army power is 2 per soldier × (1 + 0.5 × forges)', () => {
+  it('army power is 2 per soldier, × (1 + 0.5 × Forges level) for each armed one', () => {
     const army = { ...createRealm(1), soldiers: 10 };
-    const withForges = (forge: number) => ({ ...army, buildings: { ...army.buildings, forge } });
     expect(armyPower(createRealm(1))).toBe(0);
-    expect(armyPower(withForges(0))).toBe(20);
-    expect(armyPower(withForges(1))).toBe(30);
-    expect(armyPower(withForges(2))).toBe(40);
+    expect(armyPower(army)).toBe(20);
   });
 
   it('train and disband do not mutate their input', () => {
@@ -1270,6 +1289,649 @@ describe('soldiers and army power (design §6)', () => {
     train(realm, 2);
     disband({ ...realm, soldiers: 2 });
     expect(realm).toEqual(before);
+  });
+});
+
+describe('build counts (design §5)', () => {
+  /** A realm at peace with room and stores for anything, and a Barracks for Forges. */
+  const rich = (): Realm => {
+    const realm = atPeace(createRealm(1));
+    return {
+      ...realm,
+      storehouse: 3,
+      idle: 0,
+      jobs: { ...realm.jobs, builder: 1 },
+      buildings: { ...realm.buildings, barracks: 1 },
+      stores: { food: 1000, wood: 5000, iron: 1000, gold: 3000, weapons: 0 },
+    };
+  };
+
+  it('costs and works count × the one-building price', () => {
+    const realm = rich();
+    expect(orderCost(realm, 'hut', 3)).toEqual({ wood: 75 });
+    expect(orderWork(realm, 'hut', 3)).toBe(60);
+    expect(orderCost(realm, 'market', 2)).toEqual({ wood: 80, gold: 60 });
+    expect(orderWork(realm, 'market', 2)).toBe(80);
+    expect(orderCost(realm, 'forge', 4)).toEqual({ wood: 240, iron: 80 });
+    expect(orderWork(realm, 'forge', 4)).toBe(240);
+    expect(orderCost(realm, 'hut')).toEqual(orderCost(realm, 'hut', 1));
+  });
+
+  it('keeps the price flat however many are built or queued', () => {
+    const realm = { ...rich(), buildings: { ...rich().buildings, hut: 9 } };
+    expect(orderCost(realm, 'hut', 2)).toEqual({ wood: 50 });
+    expect(orderWork(realm, 'hut', 2)).toBe(40);
+    const queued = order(realm, 'hut', 5);
+    expect(orderCost(queued, 'hut', 2)).toEqual({ wood: 50 });
+  });
+
+  it(`takes up to ${BUILD_MAX} in one order and pays count × cost`, () => {
+    const realm = rich();
+    const next = order(realm, 'hut', BUILD_MAX);
+    expect(next.queue).toEqual([
+      { building: 'hut', count: BUILD_MAX, cost: { wood: 250 }, work: 200, done: 0 },
+    ]);
+    expect(next.stores.wood).toBe(realm.stores.wood - 250);
+  });
+
+  it('prices a count above the maximum as the maximum, but refuses to order it', () => {
+    const realm = rich();
+    expect(orderCost(realm, 'hut', BUILD_MAX + 1)).toEqual(orderCost(realm, 'hut', BUILD_MAX));
+    expect(orderWork(realm, 'hut', BUILD_MAX + 1)).toBe(orderWork(realm, 'hut', BUILD_MAX));
+    expect(canOrder(realm, 'hut', BUILD_MAX + 1)).toBe(false);
+    expect(order(realm, 'hut', BUILD_MAX + 1)).toBe(realm);
+  });
+
+  it.each([Number.NaN, 0, -1, 1.5, BUILD_MAX + 1, Infinity, -Infinity])(
+    'refuses a count of %s and leaves the realm and its stores alone',
+    (count) => {
+      const realm = rich();
+      expect(canOrder(realm, 'hut', count)).toBe(false);
+      expect(order(realm, 'hut', count)).toBe(realm);
+      expect(canOrder(realm, 'market', count)).toBe(false);
+      expect(canOrder(realm, 'forge', count)).toBe(false);
+    },
+  );
+
+  it('prices an invalid count as one, so the panel never shows NaN or 0', () => {
+    const realm = rich();
+    for (const count of [Number.NaN, 0, -1, 1.5]) {
+      expect(orderCost(realm, 'hut', count)).toEqual({ wood: 25 });
+      expect(orderWork(realm, 'hut', count)).toBe(20);
+    }
+  });
+
+  it('refuses a count the stores cannot pay in full', () => {
+    const realm = { ...rich(), stores: { ...rich().stores, wood: 74 } };
+    expect(canOrder(realm, 'hut', 3)).toBe(false);
+    expect(order(realm, 'hut', 3)).toBe(realm);
+    expect(canOrder(realm, 'hut', 2)).toBe(true);
+    const noGold = { ...rich(), stores: { ...rich().stores, gold: 59 } };
+    expect(canOrder(noGold, 'market', 2)).toBe(false);
+    expect(canOrder(noGold, 'market', 1)).toBe(true);
+  });
+
+  it('refuses a count whose cost is above the store cap', () => {
+    // 10 Huts cost 250 wood; a level 0 Storehouse holds 200.
+    const realm = { ...rich(), storehouse: 0, stores: { ...rich().stores, wood: 200 } };
+    expect(canOrder(realm, 'hut', 8)).toBe(true);
+    expect(canOrder(realm, 'hut', 10)).toBe(false);
+  });
+
+  it('refuses two Barracks, and a Barracks once one is built or queued', () => {
+    const realm = { ...rich(), idle: 15, buildings: { ...rich().buildings, barracks: 0 } };
+    expect(canOrder(realm, 'barracks', 2)).toBe(false);
+    expect(order(realm, 'barracks', 2)).toBe(realm);
+    expect(orderCost(realm, 'barracks', 2)).toEqual({ wood: 50, gold: 20 });
+    const queued = order(realm, 'barracks', 1);
+    expect(queued.queue).toHaveLength(1);
+    expect(canOrder(queued, 'barracks', 1)).toBe(false);
+    expect(canOrder(rich(), 'barracks', 1)).toBe(false);
+  });
+
+  it('counts every queued unit towards the room left below the max', () => {
+    const queued = order(order(rich(), 'hut', 10), 'hut', 10);
+    expect(queued.queue).toHaveLength(2);
+    expect(queued.queue.reduce((n, o) => n + o.count, 0)).toBe(20);
+    expect(atMax(queued, 'hut')).toBe(false);
+  });
+
+  it('takes a level as one whatever the count', () => {
+    const realm = { ...rich(), buildings: { ...rich().buildings, wall: 0 } };
+    const next = order(realm, 'wall', 3);
+    expect(next.queue).toHaveLength(1);
+    expect(next.queue[0]!.count).toBe(1);
+    expect(next.queue[0]!.cost).toEqual(orderCost(realm, 'wall', 1));
+    expect(orderCost(realm, 'wall', 3)).toEqual(orderCost(realm, 'wall', 1));
+    const level = order({ ...realm, buildings: { ...realm.buildings, hut: 1 } }, 'hutLevel', 4);
+    expect(level.queue[0]!.count).toBe(1);
+    expect(level.stores.wood).toBe(realm.stores.wood - 150);
+  });
+
+  it('fills the queue with one order per call, however many it builds', () => {
+    let realm = rich();
+    for (let i = 0; i < QUEUE_MAX; i++) realm = order(realm, 'hut', BUILD_MAX);
+    expect(realm.queue).toHaveLength(QUEUE_MAX);
+    expect(canOrder(realm, 'hut', 1)).toBe(false);
+  });
+
+  it('labels the order "a Hut" or "3 Huts" in the Chronicle and the queue', () => {
+    const one = order(rich(), 'hut', 1);
+    expect(lines(one).at(-1)).toBe('Ordered a Hut.');
+    const three = order(one, 'hut', 3);
+    expect(lines(three).at(-1)).toBe('Ordered 3 Huts.');
+    expect(queueView(three).map((o) => o.label)).toEqual(['Hut', '3 Huts']);
+    expect(lines(order(rich(), 'market', 2)).at(-1)).toBe('Ordered 2 Markets.');
+    expect(lines(order(rich(), 'forge', 10)).at(-1)).toBe('Ordered 10 Forges.');
+    expect(lines(order(rich(), 'market', 1)).at(-1)).toBe('Ordered a Market.');
+  });
+
+  it('finishing a count order builds all of them at once and writes "Built 3 Huts."', () => {
+    const ordered = order(rich(), 'hut', 3);
+    const done = finishAll(ordered);
+    expect(done.buildings.hut).toBe(3);
+    expect(done.queue).toEqual([]);
+    expect(lines(done)).toContain('Built 3 Huts.');
+    expect(housingCap(done)).toBe(housingCap(rich()) + 15);
+    expect(lines(finishAll(order(rich(), 'hut', 1)))).toContain('Built a Hut.');
+  });
+
+  it('does not add any of the order before its work is done', () => {
+    const ordered = order(rich(), 'hut', 3);
+    const part = construct(ordered, 59);
+    expect(part.buildings.hut).toBe(0);
+    expect(part.queue[0]).toMatchObject({ count: 3, done: 59 });
+    const done = construct(part, 1);
+    expect(done.buildings.hut).toBe(3);
+  });
+
+  it('builds on top of what stands: 2 Markets, then 3 more make 5', () => {
+    const realm = finishAll(order(finishAll(order(rich(), 'market', 2)), 'market', 3));
+    expect(realm.buildings.market).toBe(5);
+  });
+
+  it('cancelling a count order refunds its whole cost and writes "Cancelled 3 Huts."', () => {
+    const realm = rich();
+    const ordered = order(realm, 'hut', 3);
+    expect(ordered.stores.wood).toBe(realm.stores.wood - 75);
+    const back = cancelOrder(ordered, 0);
+    expect(back.stores).toEqual(realm.stores);
+    expect(back.queue).toEqual([]);
+    expect(lines(back).at(-1)).toBe('Cancelled 3 Huts.');
+  });
+
+  it('cancelling a count order leaves the other orders and their prices alone', () => {
+    const realm = rich();
+    const ordered = order(order(order(realm, 'hut', 2), 'market', 2), 'forge', 3);
+    const back = cancelOrder(ordered, 1);
+    expect(back.queue.map((o) => [o.building, o.count])).toEqual([
+      ['hut', 2],
+      ['forge', 3],
+    ]);
+    expect(back.stores.gold).toBe(realm.stores.gold);
+    expect(back.stores.wood).toBe(realm.stores.wood - 50 - 180);
+    expect(lines(back).at(-1)).toBe('Cancelled 2 Markets.');
+  });
+
+  it('shows a count order in the queue with its summed work and time left', () => {
+    const realm = order(rich(), 'hut', 3);
+    expect(queueView(realm)).toEqual([{ label: '3 Huts', done: 0, work: 60, secondsLeft: 60 }]);
+  });
+
+  it('does not mutate its input', () => {
+    const realm = rich();
+    const before = structuredClone(realm);
+    cancelOrder(finishAll(order(realm, 'hut', 4)), 0);
+    expect(realm).toEqual(before);
+  });
+});
+
+describe('Huts, Markets and Forges levels (design §5)', () => {
+  const rich = (): Realm => {
+    const realm = atPeace(createRealm(1));
+    return {
+      ...realm,
+      storehouse: 3,
+      idle: 0,
+      jobs: { ...realm.jobs, builder: 1 },
+      buildings: { ...realm.buildings, hut: 1, market: 1, barracks: 1, forge: 1 },
+      stores: { food: 1000, wood: 5000, iron: 1000, gold: 3000, weapons: 0 },
+    };
+  };
+  const at = (kind: 'hutLevel' | 'marketLevel' | 'forgeLevel', level: number): Realm => ({
+    ...rich(),
+    buildings: { ...rich().buildings, [kind]: level },
+  });
+
+  it('starts every kind at level 1', () => {
+    const { buildings } = createRealm(1);
+    expect([buildings.hutLevel, buildings.marketLevel, buildings.forgeLevel]).toEqual([1, 1, 1]);
+  });
+
+  it('names the kinds Huts, Markets and Forges, topped at level 5', () => {
+    expect(UPGRADE_MAX).toBe(5);
+    for (const [c, name] of [
+      ['hutLevel', 'Huts'],
+      ['marketLevel', 'Markets'],
+      ['forgeLevel', 'Forges'],
+    ] as const) {
+      expect(CONSTRUCTION_INFO[c].name).toBe(name);
+      expect(CONSTRUCTION_INFO[c].max).toBe(UPGRADE_MAX);
+      expect(CONSTRUCTION_INFO[c].levelled).toBe(true);
+    }
+  });
+
+  it('adds half a level-1 effect per level: 1, 1.5, 2, 2.5, 3', () => {
+    expect([1, 2, 3, 4, 5].map(upgradeBonus)).toEqual([1, 1.5, 2, 2.5, 3]);
+  });
+
+  it('doubles the cost and work per level: Huts 150, 300, 600, 1200 wood', () => {
+    const cost = (level: number) => orderCost(at('hutLevel', level), 'hutLevel');
+    const work = (level: number) => orderWork(at('hutLevel', level), 'hutLevel');
+    expect([1, 2, 3, 4].map(cost)).toEqual([
+      { wood: 150, gold: 50 },
+      { wood: 300, gold: 100 },
+      { wood: 600, gold: 200 },
+      { wood: 1200, gold: 400 },
+    ]);
+    expect([1, 2, 3, 4].map(work)).toEqual([60, 120, 240, 480]);
+  });
+
+  it('prices Markets level 2 at 200 wood and 150 gold, 80 work', () => {
+    const realm = at('marketLevel', 1);
+    expect(orderCost(realm, 'marketLevel')).toEqual({ wood: 200, gold: 150 });
+    expect(orderWork(realm, 'marketLevel')).toBe(80);
+    expect(orderCost(at('marketLevel', 4), 'marketLevel')).toEqual({ wood: 1600, gold: 1200 });
+  });
+
+  it('prices Forges level 2 at 150 wood and 60 iron, 80 work', () => {
+    const realm = at('forgeLevel', 1);
+    expect(orderCost(realm, 'forgeLevel')).toEqual({ wood: 150, iron: 60 });
+    expect(orderWork(realm, 'forgeLevel')).toBe(80);
+    expect(orderCost(at('forgeLevel', 3), 'forgeLevel')).toEqual({ wood: 600, iron: 240 });
+  });
+
+  it('prices a queued level on top of the levels already queued', () => {
+    const first = order(at('hutLevel', 1), 'hutLevel');
+    expect(first.queue[0]).toMatchObject({ cost: { wood: 150, gold: 50 }, work: 60, count: 1 });
+    expect(orderCost(first, 'hutLevel')).toEqual({ wood: 300, gold: 100 });
+    expect(orderWork(first, 'hutLevel')).toBe(120);
+  });
+
+  it('stops at level 5, queued levels counting', () => {
+    const top = at('hutLevel', 5);
+    expect(atMax(top, 'hutLevel')).toBe(true);
+    expect(canOrder(top, 'hutLevel')).toBe(false);
+    expect(order(top, 'hutLevel')).toBe(top);
+    const queued = order(at('hutLevel', 4), 'hutLevel');
+    expect(canOrder(queued, 'hutLevel')).toBe(false);
+    for (const c of ['marketLevel', 'forgeLevel'] as const)
+      expect(canOrder(at(c, 5), c)).toBe(false);
+  });
+
+  it('needs one of its building built: a queued one is not enough', () => {
+    const none = { ...rich(), buildings: { ...rich().buildings, hut: 0 } };
+    expect(unmetNeeds(none, 'hutLevel')).toEqual([{ building: 'hut', level: 1 }]);
+    expect(canOrder(none, 'hutLevel')).toBe(false);
+    expect(order(none, 'hutLevel')).toBe(none);
+    expect(canOrder(order(none, 'hut'), 'hutLevel')).toBe(false);
+    expect(canOrder(finishAll(order(none, 'hut')), 'hutLevel')).toBe(true);
+    const noMarket = { ...rich(), buildings: { ...rich().buildings, market: 0 } };
+    expect(canOrder(noMarket, 'marketLevel')).toBe(false);
+    const noForge = { ...rich(), buildings: { ...rich().buildings, forge: 0 } };
+    expect(canOrder(noForge, 'forgeLevel')).toBe(false);
+    expect(needText({ building: 'hut', level: 1 })).toBe('Hut');
+  });
+
+  it('refuses without the stores, or when the cost is above the store cap', () => {
+    const poor = { ...at('hutLevel', 1), stores: { ...rich().stores, gold: 49 } };
+    expect(canOrder(poor, 'hutLevel')).toBe(false);
+    const small = { ...at('hutLevel', 1), storehouse: 0, stores: { ...rich().stores, wood: 200 } };
+    expect(canOrder(small, 'hutLevel')).toBe(true);
+    const deep = { ...small, buildings: { ...small.buildings, hutLevel: 3 } };
+    expect(canOrder(deep, 'hutLevel')).toBe(false);
+  });
+
+  it('labels a level "Huts level 2" and raises it with "Raised Huts to level 2."', () => {
+    const realm = at('hutLevel', 1);
+    const ordered = order(realm, 'hutLevel');
+    expect(lines(ordered).at(-1)).toBe('Ordered Huts level 2.');
+    expect(queueView(ordered).map((o) => o.label)).toEqual(['Huts level 2']);
+    const done = finishAll(ordered);
+    expect(done.buildings.hutLevel).toBe(2);
+    expect(lines(done)).toContain('Raised Huts to level 2.');
+    expect(lines(finishAll(order(at('marketLevel', 2), 'marketLevel')))).toContain(
+      'Raised Markets to level 3.',
+    );
+    expect(lines(finishAll(order(at('forgeLevel', 3), 'forgeLevel')))).toContain(
+      'Raised Forges to level 4.',
+    );
+  });
+
+  it('keeps "the Wall" and "the Defence tower" wording for their levels', () => {
+    const realm = finishAll(order(rich(), 'wall'));
+    expect(lines(realm)).toContain('Raised the Wall to level 1.');
+    expect(lines(finishAll(order(realm, 'tower')))).toContain(
+      'Raised the Defence tower to level 1.',
+    );
+  });
+
+  it('cancels a queued level with a full refund and cancels the levels after it', () => {
+    const realm = at('hutLevel', 1);
+    const two = order(order(realm, 'hutLevel'), 'hutLevel');
+    expect(queueView(two).map((o) => o.label)).toEqual(['Huts level 2', 'Huts level 3']);
+    const back = cancelOrder(two, 0);
+    expect(back.queue).toEqual([]);
+    expect(back.stores).toEqual(realm.stores);
+    expect(lines(back).slice(-2)).toEqual(['Cancelled Huts level 2.', 'Cancelled Huts level 3.']);
+  });
+
+  it('a Hut order after a Huts level order is unaffected by the level', () => {
+    const realm = order(at('hutLevel', 2), 'hut', 2);
+    expect(realm.queue[0]!.cost).toEqual({ wood: 50 });
+  });
+
+  it('housing is 15 + floor(huts × 5 × bonus) + annexed', () => {
+    const housing = (huts: number, level: number, annexed = 0) =>
+      housingCap({
+        ...rich(),
+        annexedHousing: annexed,
+        buildings: { ...rich().buildings, hut: huts, hutLevel: level },
+      });
+    expect(housing(0, 1)).toBe(15);
+    expect(housing(4, 1)).toBe(35);
+    expect(housing(4, 2)).toBe(45);
+    expect(housing(4, 3)).toBe(55);
+    expect(housing(4, 5)).toBe(75);
+    // 1 Hut at level 2 houses 7.5, rounded down.
+    expect(housing(1, 2)).toBe(22);
+    expect(housing(3, 2)).toBe(15 + 22);
+    expect(housing(4, 2, 10)).toBe(55);
+  });
+
+  it('a finished Huts level raises the housing cap at once', () => {
+    const realm = { ...at('hutLevel', 1), buildings: { ...rich().buildings, hut: 4 } };
+    expect(housingCap(finishAll(order(realm, 'hutLevel')))).toBe(housingCap(realm) + 10);
+  });
+
+  it('gold per Market is 1 × the Markets bonus', () => {
+    const gold = (markets: number, level: number) =>
+      rates({
+        ...rich(),
+        idle: 0,
+        jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 },
+        buildings: { ...rich().buildings, market: markets, marketLevel: level },
+      }).gold;
+    expect(gold(0, 1)).toBeCloseTo(0);
+    expect(gold(1, 1)).toBeCloseTo(1);
+    expect(gold(4, 1)).toBeCloseTo(4);
+    expect(gold(4, 2)).toBeCloseTo(6);
+    expect(gold(4, 5)).toBeCloseTo(12);
+    expect(gold(0, 5)).toBeCloseTo(0);
+  });
+
+  it('Market gold is unaffected by the Huts and Forges levels', () => {
+    const base = rates(rich()).gold;
+    expect(rates(at('hutLevel', 4)).gold).toBeCloseTo(base);
+    expect(rates(at('forgeLevel', 4)).gold).toBeCloseTo(base);
+  });
+});
+
+describe('Forge weapons (design §5, §6)', () => {
+  /** Quiet realm: no workers or soldiers to disturb stores, room for iron and weapons. */
+  const smithy = (forge: number, iron: number, weapons = 0): Realm => {
+    const realm = atPeace(createRealm(1));
+    return {
+      ...realm,
+      time: 0,
+      storehouse: 2,
+      idle: 0,
+      jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 },
+      buildings: { ...realm.buildings, barracks: 1, forge },
+      stores: { food: 1000, wood: 0, iron, gold: 0, weapons },
+    };
+  };
+
+  it('is made by FORGE: one weapon per 5 s from 2 iron per Forge, +50% per level', () => {
+    expect(FORGE).toEqual({ every: 5, iron: 2, armedBonus: 0.5 });
+  });
+
+  it('each Forge makes 1 weapon per 5 s', () => {
+    const next = tick(smithy(1, 100), 5);
+    expect(next.stores.weapons).toBeCloseTo(1, 9);
+    expect(tick(smithy(3, 100), 10).stores.weapons).toBeCloseTo(6, 9);
+    expect(tick(smithy(0, 100), 10).stores.weapons).toBe(0);
+  });
+
+  it('makes weapons in quarter-second ticks at the same rate', () => {
+    const realm = untimed(smithy(2, 100), 10);
+    expect(realm.stores.weapons).toBeCloseTo(4, 9);
+  });
+
+  it('uses exactly 2 iron per weapon', () => {
+    const next = tick(smithy(2, 100), 10);
+    expect(next.stores.iron).toBeCloseTo(100 - 2 * next.stores.weapons, 9);
+    expect(next.stores.iron).toBeCloseTo(92, 9);
+  });
+
+  it('stops without iron', () => {
+    const next = tick(smithy(5, 0), 10);
+    expect(next.stores.weapons).toBe(0);
+    expect(next.stores.iron).toBe(0);
+  });
+
+  it('makes only what the iron pays for, down to exactly 0 iron, never a negative store', () => {
+    const next = tick(smithy(5, 3), 10);
+    expect(next.stores.weapons).toBeCloseTo(1.5, 9);
+    expect(next.stores.iron).toBeCloseTo(0, 9);
+    expect(next.stores.iron).toBeGreaterThanOrEqual(0);
+    const later = tick(next, 10);
+    expect(later.stores.weapons).toBeCloseTo(1.5, 9);
+  });
+
+  it('carries on once miners bring iron in', () => {
+    const realm = {
+      ...smithy(1, 0),
+      jobs: { farmer: 0, woodcutter: 0, miner: 4, builder: 0 },
+    };
+    const next = untimed(realm, 40);
+    expect(next.stores.weapons).toBeGreaterThan(0);
+  });
+
+  it('stops at the weapons cap and takes only the iron for what fits', () => {
+    const cap = storeCaps(smithy(1, 0)).weapons;
+    const next = tick(smithy(5, 100, cap - 0.5), 10);
+    expect(next.stores.weapons).toBe(cap);
+    expect(next.stores.iron).toBeCloseTo(99, 9);
+    const full = tick(smithy(5, 100, cap), 10);
+    expect(full.stores.weapons).toBe(cap);
+    expect(full.stores.iron).toBe(100);
+  });
+
+  it('a Storehouse level raises the weapons cap: 20, 60, 200, 600', () => {
+    expect(
+      [0, 1, 2, 3].map((level) => storeCaps({ ...createRealm(1), storehouse: level }).weapons),
+    ).toEqual([20, 60, 200, 600]);
+    expect(
+      [0, 1, 2, 3, 4, 5].map((l) => safeAmounts({ ...createRealm(1), storehouse: l }).weapons),
+    ).toEqual(Array(6).fill(0));
+  });
+
+  it('rates() shows weapons +Forges/5 and iron −2 × that', () => {
+    const r = rates(smithy(3, 100));
+    expect(r.weapons).toBeCloseTo(0.6, 9);
+    expect(r.iron).toBeCloseTo(-1.2, 9);
+  });
+
+  it('rates() adds the Forge iron use to the miners’ income', () => {
+    const realm = { ...smithy(3, 100), jobs: { farmer: 0, woodcutter: 0, miner: 4, builder: 0 } };
+    expect(rates(realm).iron).toBeCloseTo(
+      rates({ ...realm, buildings: { ...realm.buildings, forge: 0 } }).iron - 1.2,
+      9,
+    );
+  });
+
+  it('rates() shows no weapons without Forges, without iron, or at the cap', () => {
+    expect(rates(smithy(0, 100)).weapons).toBe(0);
+    expect(rates(smithy(3, 0)).weapons).toBe(0);
+    expect(rates(smithy(3, 0)).iron).toBe(0);
+    const cap = storeCaps(smithy(3, 0)).weapons;
+    expect(rates(smithy(3, 100, cap)).weapons).toBe(0);
+    expect(rates(smithy(3, 100, cap)).iron).toBe(0);
+  });
+
+  it('keeps the weapons store through a raid, and holds no safe amount for it', () => {
+    const realm = {
+      ...smithy(0, 0, 10),
+      rivals: createRealm(1).rivals.map((r) => ({ ...r, hostile: true })),
+    };
+    const raided = raid(realm, createRng(5));
+    expect(lines(raided).at(-1)).toMatch(/raided/);
+    expect(raided.stores.weapons).toBe(10);
+  });
+
+  describe('armed soldiers and army power', () => {
+    const army = (soldiers: number, weapons: number, forgeLevel = 1): Realm => ({
+      ...createRealm(1),
+      soldiers,
+      stores: { ...createRealm(1).stores, weapons },
+      buildings: { ...createRealm(1).buildings, forgeLevel },
+    });
+
+    it('arms one soldier per whole weapon, up to the soldiers', () => {
+      expect(armedSoldiers(army(10, 0))).toBe(0);
+      expect(armedSoldiers(army(10, 3.9))).toBe(3);
+      expect(armedSoldiers(army(10, 10))).toBe(10);
+      expect(armedSoldiers(army(10, 15.7))).toBe(10);
+      expect(armedSoldiers(army(0, 15))).toBe(0);
+    });
+
+    it('weaponBonus is 1 + 0.5 × the Forges level', () => {
+      expect([1, 2, 3, 4, 5].map((l) => weaponBonus(army(1, 1, l)))).toEqual([1.5, 2, 2.5, 3, 3.5]);
+    });
+
+    it('power is (unarmed + armed × bonus) × 2', () => {
+      expect(armyPower(army(10, 0))).toBe(20);
+      expect(armyPower(army(10, 4))).toBe((6 + 4 * 1.5) * 2);
+      expect(armyPower(army(10, 10))).toBe(30);
+      expect(armyPower(army(10, 99))).toBe(30);
+      expect(armyPower(army(10, 4, 3))).toBe((6 + 4 * 2.5) * 2);
+      expect(armyPower(army(10, 10, 5))).toBe(70);
+    });
+
+    it('weapons without soldiers add no power', () => {
+      expect(armyPower(army(0, 50))).toBe(0);
+    });
+
+    it('a Forge itself no longer adds power, only weapons do', () => {
+      const forged = { ...army(10, 0), buildings: { ...army(10, 0).buildings, forge: 5 } };
+      expect(armyPower(forged)).toBe(20);
+    });
+
+    it('Wall defence scales the armed power', () => {
+      const walled = { ...army(10, 10), buildings: { ...army(10, 10).buildings, wall: 2 } };
+      expect(capitalDefence(walled)).toBeCloseTo(30 * 1.4);
+    });
+  });
+
+  describe('weapons lost in battle', () => {
+    const WIN = () => 0;
+    const LOSE = () => 0.999999;
+    const fighting = (soldiers: number, weapons: number, power = 20): Realm => {
+      const realm = createRealm(11);
+      return {
+        ...realm,
+        soldiers,
+        stores: { ...realm.stores, weapons, gold: 50 },
+        rivals: realm.rivals.map((r, i) => (i === 0 ? { ...r, power, ceiling: 1e6 } : r)),
+      };
+    };
+
+    it('weaponsLost is the lost soldiers’ share of the armed ones', () => {
+      expect(weaponsLost(fighting(10, 5), 4)).toBe(2);
+      expect(weaponsLost(fighting(10, 10), 3)).toBe(3);
+      expect(weaponsLost(fighting(10, 0), 3)).toBe(0);
+      expect(weaponsLost(fighting(0, 5), 3)).toBe(0);
+      expect(weaponsLost(fighting(10, 5), 0)).toBe(0);
+    });
+
+    it('never loses more weapons than are in store, nor more than the armed share', () => {
+      expect(weaponsLost(fighting(4, 100), 4)).toBe(4);
+      expect(weaponsLost(fighting(4, 100), 2)).toBe(2);
+      expect(weaponsLost(fighting(10, 0.9), 10)).toBe(0);
+    });
+
+    it('a lost battle removes the dead soldiers’ weapons', () => {
+      const realm = fighting(10, 10, 1000);
+      const next = attack(realm, 0, LOSE);
+      const lost = realm.soldiers - next.soldiers;
+      expect(lost).toBeGreaterThan(0);
+      expect(next.stores.weapons).toBe(10 - lost);
+    });
+
+    it('a won battle removes the dead soldiers’ weapons too', () => {
+      const realm = fighting(10, 5, 1);
+      const next = attack(realm, 0, WIN);
+      expect(next.battlesWon).toBe(1);
+      const lost = realm.soldiers - next.soldiers;
+      expect(lost).toBeGreaterThan(0);
+      expect(next.stores.weapons).toBe(5 - Math.round((lost * 5) / 10));
+    });
+
+    it('unarmed soldiers lose no weapons', () => {
+      const next = attack(fighting(10, 0, 1000), 0, LOSE);
+      expect(next.stores.weapons).toBe(0);
+    });
+
+    it('with more weapons than soldiers, the spare ones stay in store', () => {
+      const realm = fighting(4, 10, 1000);
+      const next = attack(realm, 0, LOSE);
+      const lost = realm.soldiers - next.soldiers;
+      expect(next.stores.weapons).toBe(10 - lost);
+      expect(next.stores.weapons).toBeGreaterThanOrEqual(0);
+    });
+
+    it('keeps a whole-number weapons store when the loss share is fractional', () => {
+      const next = attack(fighting(7, 3, 1000), 0, LOSE);
+      expect(Number.isInteger(next.stores.weapons)).toBe(true);
+      expect(next.stores.weapons).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('weapons stay in store', () => {
+    it('on disband', () => {
+      const realm = { ...smithy(0, 0, 5), soldiers: 5 };
+      const next = disband(realm, 3);
+      expect(next.stores.weapons).toBe(5);
+      expect(next.soldiers).toBe(2);
+      expect(armedSoldiers(next)).toBe(2);
+      expect(disband(realm, 5).stores.weapons).toBe(5);
+    });
+
+    it('when starvation takes a soldier', () => {
+      const realm = { ...smithy(0, 0, 5), soldiers: 2 };
+      const next = loseOne(realm);
+      expect(next.soldiers).toBe(1);
+      expect(next.stores.weapons).toBe(5);
+    });
+
+    it('when unpaid soldiers desert', () => {
+      const realm = { ...smithy(0, 0, 5), soldiers: 3, desertion: 0 };
+      const next = untimed(realm, 600);
+      expect(next.soldiers).toBeLessThan(3);
+      expect(next.stores.weapons).toBe(5);
+    });
+
+    it('when new soldiers are trained', () => {
+      const realm = {
+        ...smithy(0, 50, 5),
+        idle: 3,
+        stores: { ...smithy(0, 50, 5).stores, gold: 100 },
+      };
+      const next = train(realm, 2);
+      expect(next.soldiers).toBe(2);
+      expect(next.stores.weapons).toBe(5);
+    });
   });
 });
 
@@ -2085,7 +2747,7 @@ describe('raids (design §7)', () => {
       ...realm,
       soldiers,
       storehouse,
-      stores: { food, wood, iron: 10, gold: 40 },
+      stores: { food, wood, iron: 10, gold: 40, weapons: 0 },
       rivals: realm.rivals.map((r, i) => ({ ...r, power, hostile: i === 0 })),
     } satisfies Realm;
   };
@@ -2262,7 +2924,10 @@ describe('events (design §11)', () => {
   });
 
   it('gains stop at the store cap and say only what was kept (§3)', () => {
-    const realm = { ...createRealm(5), stores: { food: 190, wood: 0, iron: 50, gold: 140 } };
+    const realm = {
+      ...createRealm(5),
+      stores: { food: 190, wood: 0, iron: 50, gold: 140, weapons: 0 },
+    };
     const harvest = applyEvent(realm, 'harvest', roll(0));
     expect(harvest.stores.food).toBe(200);
     expect(last(harvest).text).toBe('Bountiful harvest: +10 food.');
@@ -2459,7 +3124,7 @@ describe('Chronicle (design §12)', () => {
   });
 
   it('writes nothing when an action does nothing', () => {
-    const broke = { ...armed(0, 20), stores: { food: 0, wood: 0, iron: 0, gold: 0 } };
+    const broke = { ...armed(0, 20), stores: { food: 0, wood: 0, iron: 0, gold: 0, weapons: 0 } };
     for (const r of [
       order(broke, 'hut'),
       order(broke, 'storehouse'),
@@ -2828,7 +3493,7 @@ describe('trait sources (design §9)', () => {
       expect(possibleChallenges(calm())).toEqual([]);
       expect(nudge(inYear(calm(), 16)).challenge).toBeNull();
       expect(possibleChallenges(foodOnly())).toEqual(['food']);
-      const full = { ...foodOnly(), stores: { food: 500, wood: 0, iron: 0, gold: 0 } };
+      const full = { ...foodOnly(), stores: { food: 500, wood: 0, iron: 0, gold: 0, weapons: 0 } };
       expect(possibleChallenges(full)).toEqual([]);
       const realm = createRealm(9);
       const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
@@ -2857,7 +3522,7 @@ describe('trait sources (design §9)', () => {
       const realm = {
         ...inYear(foodOnly(), 17),
         challenge: { kind: 'food' as const, deadline: 19 },
-        stores: { food: 499, wood: 0, iron: 0, gold: 0 },
+        stores: { food: 499, wood: 0, iron: 0, gold: 0, weapons: 0 },
         jobs: { farmer: 20, woodcutter: 0, miner: 0, builder: 0 },
       };
       const next = nudge(realm);
@@ -2986,7 +3651,7 @@ describe('trait sources (design §9)', () => {
     const shop = (gold: number, storehouse = 3): Realm => ({
       ...calm(),
       storehouse,
-      stores: { food: 100, wood: 0, iron: 0, gold },
+      stores: { food: 100, wood: 0, iron: 0, gold, weapons: 0 },
       trader: [
         { trait: 'timberClans', price: 200 },
         { trait: 'goldenAge', price: 3000 },
@@ -3098,11 +3763,22 @@ describe('Goals panel (design §9)', () => {
   });
 
   describe('Next hint', () => {
-    /** Every building unlocked: Storehouse 1, a Barracks and Wall level 1. */
+    /** A Hut built, so only the Market onward is locked. */
+    const withHut = (realm: Realm): Realm => ({
+      ...realm,
+      buildings: { ...realm.buildings, hut: 1 },
+    });
+    /** A Hut and a Market built, so only the Barracks onward is locked. */
+    const housed = (realm: Realm): Realm => ({
+      ...withHut(realm),
+      storehouse: Math.max(realm.storehouse, 1),
+      buildings: { ...realm.buildings, hut: 1, market: 1 },
+    });
+    /** Every building unlocked: Storehouse 1, a Hut, Market, Barracks, Forge and Wall level 1. */
     const unlocked = (realm: Realm): Realm => ({
       ...realm,
       storehouse: Math.max(realm.storehouse, 1),
-      buildings: { ...realm.buildings, barracks: 1, wall: 1 },
+      buildings: { ...realm.buildings, hut: 1, market: 1, barracks: 1, forge: 1, wall: 1 },
     });
 
     it("names the first locked building's requirement first, in build-list order", () => {
@@ -3110,29 +3786,28 @@ describe('Goals panel (design §9)', () => {
       expect(nextGoal(realm)).toBe('Next: raise the Storehouse to level 1 to unlock the Market.');
       const store = { ...realm, storehouse: 1 };
       expect(nextGoal(store)).toBe('Next: reach 15 people to unlock the Barracks.');
-      const camp = { ...store, buildings: { ...store.buildings, barracks: 1 } };
-      expect(nextGoal(camp)).toBe('Next: raise the Wall to level 1 to unlock the Defence tower.');
+      const forge = { ...store, buildings: { ...store.buildings, barracks: 1 } };
+      expect(nextGoal(forge)).toBe('Next: raise the Wall to level 1 to unlock the Defence tower.');
     });
 
     it('asks for the Barracks once 15 people are reached but it is not built', () => {
-      const realm = {
-        ...start(),
-        storehouse: 1,
-        idle: 20,
-        buildings: { ...start().buildings, barracks: 0 },
-      };
+      const realm = { ...housed(start()), idle: 20 };
       // Barracks is unlocked; the Forge is the first locked building.
       expect(nextGoal(realm)).toBe('Next: build the Barracks to unlock the Forge.');
     });
 
     it('a queued requirement still counts as missing, and asks for it to be finished', () => {
       const realm = order(
-        { ...start(), stores: { food: 0, wood: 60, iron: 0, gold: 0 } },
+        { ...withHut(start()), stores: { food: 0, wood: 60, iron: 0, gold: 0, weapons: 0 } },
         'storehouse',
       );
       expect(nextGoal(realm)).toBe('Next: finish Storehouse level 1 to unlock the Market.');
       const camp = order(
-        { ...start(), storehouse: 1, idle: 20, stores: { food: 0, wood: 60, iron: 0, gold: 20 } },
+        {
+          ...housed(start()),
+          idle: 20,
+          stores: { food: 0, wood: 60, iron: 0, gold: 20, weapons: 0 },
+        },
         'barracks',
       );
       expect(nextGoal(camp)).toBe('Next: finish the Barracks to unlock the Forge.');

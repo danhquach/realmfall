@@ -1,3 +1,4 @@
+/** What the realm works towards: milestones, challenges, offers and the trader (docs/design.md §9). */
 import { int, pick, type Rng } from './rng.ts';
 import { atMax, built, CONSTRUCTION_INFO, type Need, queued, unmetNeeds } from './buildings.ts';
 import { chronicle } from './chronicle.ts';
@@ -11,6 +12,7 @@ import {
   OFFER_CHOICES,
   type OfferSource,
   type Realm,
+  UPGRADES,
 } from './model.ts';
 import { population } from './people.ts';
 import { canAfford, pay, storeCaps } from './stores.ts';
@@ -127,11 +129,13 @@ function needGoal(realm: Realm, need: Need): string {
 
 /**
  * The "Next" hint in the Goals panel (§9): the first locked building's first
- * unmet requirement, in build-list order; then the first milestone not yet
+ * unmet requirement, in build-list order (upgrades left out); then the first milestone not yet
  * reached, with its progress; once all are reached, says so.
  */
 export function nextGoal(realm: Realm): string {
   for (const c of CONSTRUCTIONS) {
+    // An upgrade only waits for its own building, which the build list already shows.
+    if (UPGRADES.some((u) => u === c)) continue;
     const [need] = unmetNeeds(realm, c);
     // A building already at its max stays built even if its requirement is lost (§5).
     if (need && !atMax(realm, c))

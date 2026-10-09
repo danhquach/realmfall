@@ -1,3 +1,4 @@
+/** Rivals: levels, power ceilings, growth, scouting and tribute (docs/design.md §7). */
 import { chance, createRng, pick, type Rng } from './rng.ts';
 import { chronicle } from './chronicle.ts';
 import {

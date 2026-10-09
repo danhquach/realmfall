@@ -1,3 +1,4 @@
+/** The Chronicle: one line per meaningful change (docs/design.md §12). */
 import { type ChronicleEntry, type ChronicleKind, type Realm, RESOURCES } from './model.ts';
 import { population } from './people.ts';
 
