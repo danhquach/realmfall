@@ -26,7 +26,9 @@ import {
   raid,
   raidRng,
   canAfford,
+  CHRONICLE_KINDS,
   CHRONICLE_MAX,
+  chronicleView,
   createRealm,
   createRival,
   growRivals,
@@ -180,7 +182,7 @@ describe('tick purity and time', () => {
       ...createRealm(3),
       traits: { horseLords: { level: 2, duplicates: 1 } },
       slots: ['horseLords' as const, null, null],
-      chronicle: [{ year: 1, text: 'A reign begins.' }],
+      chronicle: [{ year: 1, kind: 'events' as const, text: 'A reign begins.' }],
     };
     const before = structuredClone(realm);
     tick(realm, 0.25);
@@ -1530,14 +1532,22 @@ describe('traits (design §9)', () => {
     realm = sellDuplicate(realm, 'fertileValleys');
     realm = slotTrait(realm, 0, 'goldenAge');
     expect(realm.chronicle).toEqual([
-      { year: 3, text: 'Gained the trait Fertile valleys (Common).' },
-      { year: 3, text: 'Gained a duplicate of Fertile valleys (Common).' },
-      { year: 3, text: 'Gained a duplicate of Fertile valleys (Common).' },
-      { year: 3, text: 'Gained the trait Golden age (Mythic).' },
-      { year: 3, text: 'Slotted Fertile valleys (Common).' },
-      { year: 3, text: 'Raised Fertile valleys (Common) to level 2.' },
-      { year: 3, text: 'Sold a duplicate of Fertile valleys (Common) for 40 gold.' },
-      { year: 3, text: 'Swapped Fertile valleys (Common) for Golden age (Mythic) for 50 gold.' },
+      { year: 3, kind: 'traits', text: 'Gained the trait Fertile valleys (Common).' },
+      { year: 3, kind: 'traits', text: 'Gained a duplicate of Fertile valleys (Common).' },
+      { year: 3, kind: 'traits', text: 'Gained a duplicate of Fertile valleys (Common).' },
+      { year: 3, kind: 'traits', text: 'Gained the trait Golden age (Mythic).' },
+      { year: 3, kind: 'traits', text: 'Slotted Fertile valleys (Common).' },
+      { year: 3, kind: 'traits', text: 'Raised Fertile valleys (Common) to level 2.' },
+      {
+        year: 3,
+        kind: 'traits',
+        text: 'Sold a duplicate of Fertile valleys (Common) for 40 gold.',
+      },
+      {
+        year: 3,
+        kind: 'traits',
+        text: 'Swapped Fertile valleys (Common) for Golden age (Mythic) for 50 gold.',
+      },
     ]);
   });
 
@@ -1741,7 +1751,7 @@ describe('events (design §11)', () => {
     const realm = base();
     const after = applyEvent(realm, 'harvest', roll(0));
     expect(after.stores.food).toBe(80 + 50 + 3 * 10);
-    expect(last(after)).toEqual({ year: 1, text: 'Bountiful harvest: +80 food.' });
+    expect(last(after)).toEqual({ year: 1, kind: 'events', text: 'Bountiful harvest: +80 food.' });
   });
 
   it("Envoy's gifts give 40 gold and Rich vein 15 iron", () => {
@@ -1883,7 +1893,7 @@ describe('Chronicle (design §12)', () => {
 
   it('tags each line with the year it happened', () => {
     const next = build(armed(0, 20), 'hut');
-    expect(next.chronicle).toEqual([{ year: 3, text: 'Built a hut.' }]);
+    expect(next.chronicle).toEqual([{ year: 3, kind: 'buildings', text: 'Built a hut.' }]);
   });
 
   it('writes buildings raised and Storehouse upgrades', () => {
@@ -1958,16 +1968,24 @@ describe('Chronicle (design §12)', () => {
   });
 
   it(`keeps the latest ${CHRONICLE_MAX}, dropping the oldest`, () => {
-    const old = Array.from({ length: CHRONICLE_MAX }, (_, i) => ({ year: 1, text: `old ${i}` }));
+    const old = Array.from({ length: CHRONICLE_MAX }, (_, i) => ({
+      year: 1,
+      kind: 'events' as const,
+      text: `old ${i}`,
+    }));
     const next = build({ ...armed(0, 20), chronicle: old }, 'hut');
     expect(next.chronicle).toHaveLength(CHRONICLE_MAX);
     expect(next.chronicle[0]!.text).toBe('old 1');
-    expect(next.chronicle.at(-1)).toEqual({ year: 3, text: 'Built a hut.' });
+    expect(next.chronicle.at(-1)).toEqual({ year: 3, kind: 'buildings', text: 'Built a hut.' });
     expect(old).toHaveLength(CHRONICLE_MAX);
   });
 
   it(`trims a longer Chronicle to ${CHRONICLE_MAX} on the next line`, () => {
-    const old = Array.from({ length: 250 }, (_, i) => ({ year: 1, text: `old ${i}` }));
+    const old = Array.from({ length: 250 }, (_, i) => ({
+      year: 1,
+      kind: 'events' as const,
+      text: `old ${i}`,
+    }));
     const next = build({ ...armed(0, 20), chronicle: old }, 'hut');
     expect(next.chronicle).toHaveLength(CHRONICLE_MAX);
     expect(next.chronicle[0]!.text).toBe('old 51');
@@ -1977,5 +1995,95 @@ describe('Chronicle (design §12)', () => {
     const next = tick(atPeace(createRealm(3)), EVENT.every * 300);
     expect(next.chronicle).toHaveLength(CHRONICLE_MAX);
     expect(next.chronicle.at(-1)!.year).toBe(next.year);
+  });
+
+  it('tags every line with exactly one kind', () => {
+    const base = armed(10, 20);
+    const hostile = { ...base, rivals: base.rivals.map((r) => ({ ...r, hostile: true })) };
+    const rng = () => 0.5;
+    /** The kinds of the lines `after` added. */
+    const kinds = (after: Realm, before: Realm = base) =>
+      after.chronicle.slice(before.chronicle.length).map((c) => c.kind);
+    const traited = gainTrait(
+      gainTrait(gainTrait(base, 'fertileValleys'), 'fertileValleys'),
+      'goldenAge',
+    );
+    const slotted = slotTrait(traited, 0, 'fertileValleys');
+    const cases: [Realm, Realm, string[]][] = [
+      [build(base, 'hut'), base, ['buildings']],
+      [build(base, 'market'), base, ['buildings']],
+      [build(base, 'forge'), base, ['buildings']],
+      [upgradeStorehouse(base), base, ['buildings']],
+      [scout(base, 0), base, ['rivals']],
+      [tribute(hostile, 0), hostile, ['rivals']],
+      [applyEvent(base, 'changeOfHeart', rng), base, ['rivals']],
+      [applyEvent(base, 'harvest', rng), base, ['events']],
+      [applyEvent({ ...base, idle: 10 }, 'plague', rng), base, ['events']],
+      [applyEvent(base, 'envoy', rng), base, ['events']],
+      [applyEvent(base, 'vein', rng), base, ['events']],
+      [raid(hostile, rng), hostile, ['raids']],
+      [raid({ ...hostile, soldiers: 0 }, rng), hostile, ['raids']],
+      [attack(base, 0, WIN), base, ['battles', 'traits']],
+      [attack(armed(1, 100), 0, LOSE), base, ['battles']],
+      [gainTrait(base, 'fertileValleys'), base, ['traits']],
+      [gainTrait(gainTrait(base, 'goldenAge'), 'goldenAge'), base, ['traits', 'traits']],
+      [slotted, traited, ['traits']],
+      [upgradeTrait(slotted, 'fertileValleys'), slotted, ['traits']],
+      [sellDuplicate(slotted, 'fertileValleys'), slotted, ['traits']],
+      [slotTrait(slotted, 0, 'goldenAge'), slotted, ['traits']],
+    ];
+    for (const [after, before, expected] of cases) expect(kinds(after, before)).toEqual(expected);
+    const seen = new Set(cases.flatMap(([a, b]) => kinds(a, b)));
+    expect([...seen].sort()).toEqual([...CHRONICLE_KINDS].sort());
+  });
+
+  it('tags raid and event lines written during tick', () => {
+    const realm = createRealm(5);
+    const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
+    const next = tick(hostile, RAID.every * 20);
+    for (const c of next.chronicle) {
+      expect(c.kind).toBe(
+        /raid/.test(c.text) ? 'raids' : /Change of heart/.test(c.text) ? 'rivals' : 'events',
+      );
+    }
+  });
+});
+
+describe('chronicleView (design §12)', () => {
+  const entry = (i: number) => ({
+    year: 1 + Math.floor(i / 3),
+    kind: CHRONICLE_KINDS[i % CHRONICLE_KINDS.length]!,
+    text: `line ${i}`,
+  });
+
+  it('shows every line newest first with every kind on', () => {
+    const all = Array.from({ length: 12 }, (_, i) => entry(i));
+    expect(chronicleView(all, new Set(CHRONICLE_KINDS))).toEqual([...all].reverse());
+  });
+
+  it('hides exactly the lines of the kinds turned off, keeping order and years', () => {
+    const all = Array.from({ length: 12 }, (_, i) => entry(i));
+    const view = chronicleView(all, new Set(['raids', 'traits'] as const));
+    expect(view.map((e) => e.text)).toEqual(['line 11', 'line 7', 'line 5', 'line 1']);
+    expect(view.map((e) => e.year)).toEqual([4, 3, 2, 1]);
+  });
+
+  it('shows nothing with every kind off, and leaves the Chronicle untouched', () => {
+    const all = Array.from({ length: 12 }, (_, i) => entry(i));
+    const before = structuredClone(all);
+    expect(chronicleView(all, new Set())).toEqual([]);
+    expect(all).toEqual(before);
+  });
+
+  it(`hidden lines still count toward the ${CHRONICLE_MAX}-line cap`, () => {
+    const old = Array.from({ length: CHRONICLE_MAX }, (_, i) => entry(i));
+    let realm: Realm = { ...createRealm(11), year: 99, chronicle: old };
+    realm = build({ ...realm, stores: { ...realm.stores, wood: 100 } }, 'hut');
+    expect(realm.chronicle).toHaveLength(CHRONICLE_MAX);
+    const view = chronicleView(realm.chronicle, new Set(['buildings'] as const));
+    expect(view[0]).toEqual({ year: 99, kind: 'buildings', text: 'Built a hut.' });
+    // line 0 (events) fell off the oldest end; the oldest buildings line left is line 4.
+    expect(view.at(-1)!.text).toBe('line 4');
+    expect(view).toHaveLength(1 + old.slice(1).filter((e) => e.kind === 'buildings').length);
   });
 });
