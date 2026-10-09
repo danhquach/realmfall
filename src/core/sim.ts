@@ -1,10 +1,10 @@
 import { advance } from './loop.ts';
 import {
-  BATTLE,
   armedSoldiers,
   armyPower,
   assign,
   attack,
+  conquests,
   createRealm,
   housingCap,
   order,
@@ -68,11 +68,6 @@ export interface YearRow {
 }
 
 export const SIM_LIMITS = { defaultYears: 100, maxYears: 10_000, defaultSeed: 1 } as const;
-
-/** Rivals annexed so far: each conquest adds exactly BATTLE.annexHousing housing (§7). */
-export function conquests(realm: Realm): number {
-  return realm.annexedHousing / BATTLE.annexHousing;
-}
 
 function row(realm: Realm, year: number): YearRow {
   return {

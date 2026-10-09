@@ -497,12 +497,15 @@ garrisons and bandits. At a rival capital, E is multiplied by its wall bonus
 Every 45 s a random hostile rival raids with strength E × (0.4–0.8). It targets
 your weakest garrisoned site next to its land, or your capital if none is.
 
-- **Grace period:** there are no raids until year 10 and your first Barracks
-  is built, whichever comes later, and never past year 30, so skipping the
-  Barracks doesn't buy peace.
+- **Grace period:** there are no raids before year 10. From year 10 they
+  come once your first Barracks is finished (one still in the construction
+  queue doesn't count). From year 30 they come with or without a Barracks, so
+  skipping it doesn't buy peace. A raid due during the grace period is
+  skipped, not saved up.
 - **Until your first conquest,** a raid's strength is at most
   max(1.5 × your field army power, 10), so an early realm faces raids it can
-  answer. An empty army still loses to them.
+  answer. An empty army still loses to them (strength 10 against a defence
+  of 0). After the first conquest the cap no longer applies.
 
 - **Raid on the capital:** if field army power × (1 + 0.2 × your wall level)
   ≥ raid strength, the raid is repelled. Otherwise the raiders take 25% of the
@@ -872,6 +875,13 @@ lines stay in the Chronicle and count toward its 200-line cap.
    the army to 427–601 power (§7 Levels). Forges used to add +50% army power
    each; at a flat price that stacked without limit (1,800 power from 10
    soldiers), so Forges now make weapons instead (§6).
+
+   Raid grace period and early cap (#84), seeds 1–5, 200 years. The raid in
+   year 6 no longer lands, so year 10 opens with 179 wood instead of 167 on
+   every seed. Everything the runner tracks past that is unchanged: the first
+   conquest in years 30–44, 5–7 conquests, 330–436 people and peak army
+   power of 427–601. The scripted player rarely meets a raid early, so the
+   cap's effect on a realm under real raid pressure still needs play.
 8. **Early attacks are blind.** The win chance needs exact power and unit mix
    (scout level 3, so Defence tower 2), so the first attacks are made without
    it. Intended, but worth checking in play.

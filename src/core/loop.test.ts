@@ -108,8 +108,9 @@ function live(realm: Realm, seconds: number): Realm {
 
 describe('catchUp', () => {
   it('replays an absence under a minute exactly as live play, raids and events included', () => {
-    // 59.75 s crosses the raid at 45 s and the events at 25 s and 50 s.
-    const start = busy(77);
+    // From year 11 (80 s), past the raid grace period with a Barracks (§7),
+    // 59.75 s crosses the raids at 90 s and 135 s and the events at 100 s and 125 s.
+    const start = { ...busy(77), time: 80, year: 11 };
     const live60 = live(start, AWAY_SUMMARY_MIN - STEP);
     expect(live60.chronicle.some((c) => c.kind === 'raids')).toBe(true);
     expect(live60.chronicle.filter((c) => c.kind !== 'raids').length).toBeGreaterThan(0);

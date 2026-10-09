@@ -48,7 +48,11 @@ import {
   ringPower,
   ringRival,
   rollRivalLevel,
+  BATTLE,
   RAID,
+  conquests,
+  raidCap,
+  raidGraceOver,
   EVENT,
   EVENTS,
   applyEvent,
@@ -133,6 +137,25 @@ const finishAll = (realm: Realm): Realm => {
 
 /** The Chronicle's texts, oldest first. */
 const lines = (r: Realm) => r.chronicle.map((c) => c.text);
+
+/**
+ * Game time of the first raid moment in year 30 (270 s), when raids come with
+ * or without a Barracks (§7). The next raid lands one RAID.every later.
+ */
+const GRACE_END = Math.ceil(((RAID.graceEndYear - 1) * YEAR_SECONDS) / RAID.every) * RAID.every;
+
+/** `realm` at GRACE_END, past the raid grace period (§7), its year matching its clock. */
+const pastGrace = (realm: Realm): Realm => ({
+  ...realm,
+  time: GRACE_END,
+  year: 1 + Math.floor(GRACE_END / YEAR_SECONDS),
+});
+
+/** `realm` with a finished Barracks, which ends the raid grace period from year 10 (§7). */
+const withBarracks = (realm: Realm): Realm => ({
+  ...realm,
+  buildings: { ...realm.buildings, barracks: 1 },
+});
 
 const atPeace = (realm: Realm): Realm => ({
   ...realm,
@@ -1782,7 +1805,7 @@ describe('Forge weapons (design §5, §6)', () => {
 
   it('keeps the weapons store through a raid, and holds no safe amount for it', () => {
     const realm = {
-      ...smithy(0, 0, 10),
+      ...pastGrace(smithy(0, 0, 10)),
       rivals: createRealm(1).rivals.map((r) => ({ ...r, hostile: true })),
     };
     const raided = raid(realm, createRng(5));
@@ -2740,16 +2763,27 @@ describe('raids (design §7)', () => {
     let i = 0;
     return () => values[i++] ?? 0;
   };
-  /** Only rival 0 hostile, at `power`; `soldiers` spearmen; the given stores and Storehouse level. */
-  const target = (soldiers: number, power: number, food: number, wood: number, storehouse = 1) => {
+  /**
+   * Only rival 0 hostile, at `power`; `soldiers` spearmen; the given stores and
+   * Storehouse level. Past the grace period and with a first conquest made, so
+   * raids come and strike uncapped (§7).
+   */
+  const target = (
+    soldiers: number,
+    power: number,
+    food: number,
+    wood: number,
+    storehouse = 1,
+  ): Realm => {
     const realm = createRealm(5);
     return {
-      ...realm,
+      ...pastGrace(realm),
+      annexedHousing: BATTLE.annexHousing,
       soldiers,
       storehouse,
       stores: { food, wood, iron: 10, gold: 40, weapons: 0 },
       rivals: realm.rivals.map((r, i) => ({ ...r, power, hostile: i === 0 })),
-    } satisfies Realm;
+    };
   };
 
   it('is repelled when field army power ≥ strength, losing nothing', () => {
@@ -2828,9 +2862,10 @@ describe('raids (design §7)', () => {
 
   it('a big step splits at each raid, matching steps of exactly 45 s', () => {
     // A full house (15 of 15) rules out growth; woodcutters refill wood between raids.
-    const base = createRealm(1);
+    // Seed 2's events leave every rival hostile through all ten raids.
+    const base = createRealm(2);
     const full = {
-      ...base,
+      ...pastGrace(base),
       storehouse: 1,
       jobs: { farmer: 9, woodcutter: 2, miner: 0, builder: 0 },
       rivals: base.rivals.map((r) => ({ ...r, hostile: true })),
@@ -2848,12 +2883,13 @@ describe('raids (design §7)', () => {
     expect(raid(peace, rolls(0, 0.999999))).toBe(peace);
     // With no rival at all, no Change of heart (§11) can make one hostile: events land, raids never.
     const kinds = tick({ ...peace, rivals: [] }, RAID.every * 3).chronicle.map((c) => c.kind);
-    expect(kinds.filter((k) => k === 'events')).toHaveLength(5);
+    // From 270 s, 135 s holds the events at 275 s, 300 s, … 400 s.
+    expect(kinds.filter((k) => k === 'events')).toHaveLength(6);
     expect(kinds.filter((k) => k === 'raids')).toEqual([]);
   });
 
   it('picks only among hostile rivals', () => {
-    const realm = createRealm(5);
+    const realm = pastGrace(createRealm(5));
     const rivals = realm.rivals.map((r, i) => ({ ...r, power: 1000, hostile: i !== 1 }));
     const names = new Set<string>();
     for (const roll of [0, 0.4, 0.6, 0.999999]) {
@@ -2865,7 +2901,9 @@ describe('raids (design §7)', () => {
 
   it('tick raids once every 45 s of game time, rolled on raidRng(seed, n)', () => {
     // No one works, so only raids and events (§11) move the stores.
-    const realm = target(0, 100, 5, 300, 1);
+    // Seed 1's events leave rival 0 hostile through both raids. No challenge is
+    // due, so a big step and small ones write the same lines.
+    const realm = { ...target(0, 100, 5, 300, 1), seed: 1, challengeYear: 1000 };
     const frozen = { ...realm, idle: 0, jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 } };
     const raids = (r: Realm) => r.chronicle.filter((c) => /raided|Repelled a raid/.test(c.text));
     expect(raids(tick(frozen, RAID.every - 0.25))).toHaveLength(0);
@@ -2878,10 +2916,12 @@ describe('raids (design §7)', () => {
     const other = (r: Realm) => r.chronicle.filter((c) => !/raided|Repelled a raid/.test(c.text));
     expect(other(big)).toEqual(other(stepped));
     expect(big.stores.wood).toBeCloseTo(stepped.stores.wood, 9);
-    expect(raids(big).map((c) => c.year)).toEqual([6, 12]);
-    // The first raid matches a direct roll on raidRng(seed, 1): same raider, same wood taken.
-    const at25 = tick(frozen, EVENT.every);
-    const first = raid({ ...at25, time: RAID.every, year: 6 }, raidRng(frozen.seed, 1));
+    // From 270 s: raids 7 and 8 at 315 s (year 40) and 360 s (year 46).
+    expect(raids(big).map((c) => c.year)).toEqual([40, 46]);
+    // The first raid matches a direct roll on raidRng(seed, 7): same raider, same wood taken.
+    // The events at 275 s and 300 s come before it.
+    const atEvents = tick(frozen, 300 - GRACE_END);
+    const first = raid({ ...atEvents, time: 315, year: 40 }, raidRng(frozen.seed, 7));
     const who = (text: string) => text.replace(/lost \d+ food/, '');
     expect(who(raids(stepped)[0]!.text)).toBe(who(first.chronicle.at(-1)!.text));
   });
@@ -2889,14 +2929,163 @@ describe('raids (design §7)', () => {
   it('replays the same raids from the same seed', () => {
     const run = (seed: number) => {
       const base = createRealm(seed);
-      let r = { ...base, soldiers: 3, rivals: base.rivals.map((v) => ({ ...v, hostile: true })) };
+      let r: Realm = {
+        ...pastGrace(base),
+        soldiers: 3,
+        rivals: base.rivals.map((v) => ({ ...v, hostile: true })),
+      };
       for (let t = 0; t < RAID.every * 10; t += 0.25) r = tick(r, 0.25);
       return r.chronicle.filter((c) => c.kind === 'raids');
     };
-    expect(run(42)).toHaveLength(10);
-    expect(run(42)).toEqual(run(42));
+    // Seed 43's events leave a rival hostile through all ten raids.
+    expect(run(43)).toHaveLength(10);
+    expect(run(43)).toEqual(run(43));
     expect(raidRng(42, 1)()).not.toBe(raidRng(42, 2)());
     expect(raidRng(42, 1)()).not.toBe(raidRng(43, 1)());
+  });
+
+  describe('grace period and early cap', () => {
+    const raidLines = (r: Realm) => r.chronicle.filter((c) => c.kind === 'raids');
+    /** Seed 5, every rival hostile at `power`, the given finished Barracks, in `year` with the clock to match. */
+    const early = (year: number, barracks = 0, power = 100): Realm => {
+      const realm = createRealm(5);
+      return {
+        ...realm,
+        year,
+        time: (year - 1) * YEAR_SECONDS,
+        buildings: { ...realm.buildings, barracks },
+        rivals: realm.rivals.map((r) => ({ ...r, power, hostile: true })),
+      };
+    };
+
+    it('uses the §7 numbers', () => {
+      expect(RAID.graceYear).toBe(10);
+      expect(RAID.graceEndYear).toBe(30);
+      expect(RAID.capArmy).toBe(1.5);
+      expect(RAID.capMin).toBe(10);
+    });
+
+    it('no raid before year 10, even with a Barracks: year 9.9 / 10', () => {
+      // 71.2 s is 9.9 years of game time, still year 9.
+      const late9 = { ...early(9, 1), time: 9.9 * YEAR_SECONDS - YEAR_SECONDS };
+      expect(late9.time).toBeCloseTo(71.2, 9);
+      expect(raidGraceOver(late9)).toBe(false);
+      expect(raidGraceOver(early(1, 1))).toBe(false);
+      expect(raid(late9, rolls(0, 0.5))).toBe(late9);
+      const year10 = tick(late9, 0.8);
+      expect(year10.year).toBe(10);
+      expect(raidGraceOver(year10)).toBe(true);
+      expect(raidLines(raid(year10, rolls(0, 0.5)))).toHaveLength(1);
+    });
+
+    it('a new game with a Barracks sees no raid until the first one past year 10 (90 s)', () => {
+      const start = early(1, 1);
+      // The raid at 45 s (year 6) is skipped.
+      expect(raidLines(tick(start, 90 - 0.25))).toEqual([]);
+      const first = raidLines(tick(start, 90));
+      expect(first).toHaveLength(1);
+      expect(first[0]!.year).toBe(12);
+    });
+
+    it('between years 10 and 29, a queued Barracks is not enough; a finished one is', () => {
+      for (const year of [10, 20, 29]) {
+        expect(raidGraceOver(early(year))).toBe(false);
+        expect(raidGraceOver(early(year, 1))).toBe(true);
+      }
+      const realm = {
+        ...early(15),
+        idle: 20,
+        stores: { ...early(15).stores, wood: 500, gold: 500 },
+      };
+      const queuedOnly = order(realm, 'barracks');
+      expect(queuedOnly.queue.map((o) => o.building)).toEqual(['barracks']);
+      expect(queuedOnly.buildings.barracks).toBe(0);
+      expect(raidGraceOver(queuedOnly)).toBe(false);
+      expect(raid(queuedOnly, rolls(0, 0.5))).toBe(queuedOnly);
+      const finished = finishAll(queuedOnly);
+      expect(finished.buildings.barracks).toBe(1);
+      expect(raidGraceOver(finished)).toBe(true);
+      expect(raidLines(raid(finished, rolls(0, 0.5)))).toHaveLength(1);
+    });
+
+    it('from year 30 raids come with no Barracks', () => {
+      expect(raidGraceOver(early(29))).toBe(false);
+      expect(raidGraceOver(early(30))).toBe(true);
+      expect(raidGraceOver(early(80))).toBe(true);
+      expect(raidLines(raid(early(30), rolls(0, 0.5)))).toHaveLength(1);
+      // Through tick: the raids at 45 s … 225 s (years 6–29) are skipped, the one at 270 s lands.
+      const run = tick(early(1), 270);
+      expect(run.year).toBe(34);
+      expect(raidLines(run).map((c) => c.year)).toEqual([34]);
+    });
+
+    it('caps strength at max(1.5 × field army power, 10) until the first conquest', () => {
+      // 10 spearmen = 20 power: cap 30. Rival 1000 rolls 400–800, far above it.
+      const army = (wall: number, annexedHousing = 0): Realm => {
+        const realm = { ...early(30, 0, 1000), soldiers: 10, annexedHousing };
+        return { ...realm, buildings: { ...realm.buildings, wall } };
+      };
+      expect(raidCap(army(0))).toBe(30);
+      expect(raidCap({ ...army(0), soldiers: 3 })).toBe(10);
+      expect(raidCap({ ...army(0), soldiers: 0 })).toBe(10);
+      // Wall 3: defence 20 × 1.6 = 32 ≥ 30, so the capped raid is repelled.
+      expect(lines(raid(army(3), rolls(0, 0.999999))).at(-1)).toMatch(/^Repelled a raid/);
+      // Wall 2: 28 < 30, so it still falls: the cap is 30, not lower.
+      expect(lines(raid(army(2), rolls(0, 0.999999))).at(-1)).toMatch(/raided the capital/);
+      // A roll under the cap is left alone. 4 spearmen = 8 power, cap 12; rival 20 rolls 8 to 16:
+      // the low roll (8) meets the defence exactly and is repelled, the high one (16 → 12) is not.
+      const weak = { ...early(30, 0, 20), soldiers: 4 };
+      expect(raidCap(weak)).toBe(12);
+      expect(lines(raid(weak, rolls(0, 0))).at(-1)).toMatch(/^Repelled a raid/);
+      expect(lines(raid(weak, rolls(0, 0.999999))).at(-1)).toMatch(/raided the capital/);
+    });
+
+    it('lifts the cap after the first conquest', () => {
+      const annexed = (soldiers: number, wall: number): Realm => {
+        const realm = { ...early(30, 0, 1000), soldiers, annexedHousing: BATTLE.annexHousing };
+        return { ...realm, buildings: { ...realm.buildings, wall } };
+      };
+      expect(conquests(annexed(10, 3))).toBe(1);
+      expect(raidCap(annexed(10, 3))).toBe(Infinity);
+      // The same army and Wall that held a capped raid now falls to the full 400–800.
+      expect(lines(raid(annexed(10, 3), rolls(0, 0))).at(-1)).toMatch(/raided the capital/);
+      // A won battle is the conquest that lifts it.
+      const before = { ...early(30, 1, 5), soldiers: 10 };
+      expect(raidCap(before)).toBe(30);
+      const won = attack(before, 0, () => 0);
+      expect(won.battlesWon).toBe(1);
+      expect(conquests(won)).toBe(1);
+      expect(raidCap(won)).toBe(Infinity);
+      // A lost battle doesn't.
+      const lost = attack({ ...before, rivals: early(30, 1, 1000).rivals }, 0, () => 0.999999);
+      expect(conquests(lost)).toBe(0);
+      expect(raidCap(lost)).toBe(Math.max(1.5 * armyPower(lost), 10));
+    });
+
+    it('an empty army still loses to a capped raid (strength 10)', () => {
+      const realm = { ...early(30, 1, 1000), soldiers: 0 };
+      const walled = { ...realm, buildings: { ...realm.buildings, wall: 5 } };
+      expect(raidCap(walled)).toBe(10);
+      expect(capitalDefence(walled)).toBe(0);
+      const after = raid(walled, rolls(0, 0.999999));
+      expect(after.raidsRepelled).toBe(0);
+      expect(lines(after).at(-1)).toMatch(/raided the capital/);
+      // A quarter of the food and wood above the safe amount is still taken.
+      expect(after.stores.food).toBeLessThan(walled.stores.food);
+    });
+
+    it('same seed, same raids, from a new game', () => {
+      const run = (seed: number) => {
+        let r = early(1, 1);
+        r = { ...r, seed, rivals: startingRivals(seed).map((v) => ({ ...v, hostile: true })) };
+        for (let t = 0; t < 600; t += 0.25) r = tick(r, 0.25);
+        return raidLines(r);
+      };
+      const a = run(7);
+      expect(a.length).toBeGreaterThan(0);
+      expect(a.every((c) => c.year >= RAID.graceYear)).toBe(true);
+      expect(run(7)).toEqual(a);
+    });
   });
 });
 
@@ -3014,7 +3203,8 @@ describe('events (design §11)', () => {
   });
 
   it('a raid lands before an event at the same moment (225 s)', () => {
-    const realm = createRealm(5);
+    // Year 29 with a Barracks: past the raid grace period (§7).
+    const realm = withBarracks(createRealm(5));
     const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
     const before = tick(hostile, 225 - 0.25);
     const after = tick(before, 0.25);
@@ -3111,15 +3301,16 @@ describe('Chronicle (design §12)', () => {
   });
 
   it('writes raids and events during tick, each in the year it landed', () => {
-    const realm = createRealm(5);
+    // From 280 s (year 36), past the raid grace period (§7); no challenge due to add lines.
+    const realm = { ...createRealm(5), time: 280, year: 36, challengeYear: 1000 };
     const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
-    const next = tick(hostile, RAID.every);
+    const next = tick(hostile, 35);
     const yearAt = (t: number) => 1 + Math.floor(t / YEAR_SECONDS);
-    // The event at 25 s comes first, then the raid at 45 s, each in its own year.
+    // The event at 300 s comes first, then the raid at 315 s, each in its own year.
     expect(next.chronicle).toHaveLength(2);
-    expect(next.chronicle[0]!.year).toBe(yearAt(EVENT.every));
+    expect(next.chronicle[0]!.year).toBe(yearAt(300));
     expect(next.chronicle[0]!.text).not.toMatch(/raided|Repelled a raid/);
-    expect(next.chronicle[1]!.year).toBe(yearAt(RAID.every));
+    expect(next.chronicle[1]!.year).toBe(yearAt(315));
     expect(next.chronicle[1]!.text).toMatch(/raided|Repelled a raid/);
   });
 
@@ -3191,8 +3382,8 @@ describe('Chronicle (design §12)', () => {
       [applyEvent({ ...base, idle: 10 }, 'plague', rng), base, ['events']],
       [applyEvent(base, 'envoy', rng), base, ['events']],
       [applyEvent(base, 'vein', rng), base, ['events']],
-      [raid(hostile, rng), hostile, ['raids']],
-      [raid({ ...hostile, soldiers: 0 }, rng), hostile, ['raids']],
+      [raid(pastGrace(hostile), rng), hostile, ['raids']],
+      [raid(pastGrace({ ...hostile, soldiers: 0 }), rng), hostile, ['raids']],
       [attack(base, 0, WIN), base, ['battles', 'traits']],
       [attack(armed(1, 100), 0, LOSE), base, ['battles']],
       [gainTrait(base, 'fertileValleys'), base, ['traits']],
@@ -3388,7 +3579,7 @@ describe('trait sources (design §9)', () => {
     });
 
     it('counts raids repelled, not raids lost', () => {
-      const realm = createRealm(3);
+      const realm = pastGrace(createRealm(3));
       const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
       expect(raid({ ...hostile, soldiers: 1000 }, () => 0).raidsRepelled).toBe(1);
       expect(raid({ ...hostile, soldiers: 0 }, () => 0).raidsRepelled).toBe(0);
@@ -3497,14 +3688,30 @@ describe('trait sources (design §9)', () => {
       expect(possibleChallenges(full)).toEqual([]);
       const realm = createRealm(9);
       const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
-      expect(possibleChallenges(hostile)).toEqual(['raid']);
-      expect(possibleChallenges({ ...hostile, storehouse: 1 })).toEqual(['food', 'raid']);
+      // "Repel the next raid" waits for the raid grace period to end (§7, §9).
+      expect(possibleChallenges(hostile)).toEqual([]);
+      expect(possibleChallenges(inYear(withBarracks(hostile), 9))).toEqual([]);
+      const ready = inYear(withBarracks(hostile), 10);
+      expect(possibleChallenges(ready)).toEqual(['raid']);
+      expect(possibleChallenges({ ...ready, storehouse: 1 })).toEqual(['food', 'raid']);
+      const queuedOnly = order(
+        { ...inYear(hostile, 16), idle: 20, stores: { ...hostile.stores, wood: 500, gold: 500 } },
+        'barracks',
+      );
+      expect(queuedOnly.queue.map((o) => o.building)).toEqual(['barracks']);
+      expect(possibleChallenges(queuedOnly)).toEqual([]);
+      expect(possibleChallenges(inYear(hostile, 29))).toEqual([]);
+      expect(possibleChallenges(inYear(hostile, 30))).toEqual(['raid']);
+      // A realm past the grace period is never offered it with no hostile rival.
+      expect(possibleChallenges(inYear(calm(), 30))).toEqual([]);
+      // Nor offered by tick in year 16 while the grace period lasts.
+      expect(nudge(inYear(hostile, 16)).challenge).toBeNull();
     });
 
     it('picks the challenge on the challenge stream of its year', () => {
       const realm = createRealm(11);
       const both = {
-        ...inYear(realm, 16),
+        ...inYear(withBarracks(realm), 16),
         storehouse: 1,
         rivals: realm.rivals.map((r) => ({ ...r, hostile: true })),
       };
@@ -3571,7 +3778,7 @@ describe('trait sources (design §9)', () => {
     it('"repel the next raid" is met by a repelled raid and failed by a lost one', () => {
       const realm = createRealm(3);
       const hostile = {
-        ...inYear(realm, 20),
+        ...inYear(withBarracks(realm), 20),
         rivals: realm.rivals.map((r) => ({ ...r, hostile: true })),
         challenge: { kind: 'raid' as const, deadline: 26 },
       };
@@ -3857,7 +4064,10 @@ describe('Goals panel (design §9)', () => {
 
     it('explains what is missing once its year has come', () => {
       const realm = { ...start(), year: 20, challengeYear: 16 };
-      expect(challengeText(realm)).toMatch(/^None active\. One comes once you can store 500 food/);
+      expect(challengeText(realm)).toBe(
+        'None active. One comes once you can store 500 food but hold less, ' +
+          'or a rival is hostile and raids have begun.',
+      );
     });
 
     it('shows food progress and years left', () => {
