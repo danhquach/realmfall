@@ -139,7 +139,7 @@ describe('decide', () => {
 
   it('never queues two orders of the same kind', () => {
     let realm: Realm = { ...camp(), idle: 30, storehouse: 3, soldiers: 20 };
-    realm = { ...realm, stores: { food: 5000, wood: 6000, iron: 1200, gold: 4000 } };
+    realm = { ...realm, stores: { food: 5000, wood: 6000, iron: 1200, gold: 4000, weapons: 0 } };
     realm = decide(decide(realm, rng()), rng());
     const kinds = realm.queue.map((o) => o.building);
     expect(new Set(kinds).size).toBe(kinds.length);
@@ -153,7 +153,7 @@ describe('decide', () => {
     expect(decide(busy, rng()).jobs.builder).toBe(want);
     const quiet: Realm = {
       ...createRealm(1),
-      stores: { food: 80, wood: 0, iron: 0, gold: 0 },
+      stores: { food: 80, wood: 0, iron: 0, gold: 0, weapons: 0 },
       jobs: { farmer: 4, woodcutter: 2, miner: 0, builder: 5 },
     };
     const next = decide(quiet, rng());
@@ -162,7 +162,10 @@ describe('decide', () => {
   });
 
   it('trains no soldier before a Barracks stands', () => {
-    const realm: Realm = { ...createRealm(1), stores: { food: 80, wood: 0, iron: 50, gold: 140 } };
+    const realm: Realm = {
+      ...createRealm(1),
+      stores: { food: 80, wood: 0, iron: 50, gold: 140, weapons: 0 },
+    };
     expect(decide(realm, rng()).soldiers).toBe(0);
   });
 
@@ -174,7 +177,7 @@ describe('decide', () => {
       idle: 1,
       soldiers: 2,
       jobs: { farmer: 4, woodcutter: 0, miner: 0, builder: 1 },
-      stores: { food: 80, wood: 0, iron: 50, gold: 29 },
+      stores: { food: 80, wood: 0, iron: 50, gold: 29, weapons: 0 },
     };
     expect(decide(realm, rng()).soldiers).toBe(2);
     const stocked = { ...realm, stores: { ...realm.stores, gold: 30 } };
@@ -186,7 +189,7 @@ describe('decide', () => {
     const realm: Realm = {
       ...camp(),
       jobs: { farmer: 2, woodcutter: 0, miner: 0, builder: 1 },
-      stores: { food: 80, wood: 0, iron: 50, gold: 1000 },
+      stores: { food: 80, wood: 0, iron: 50, gold: 1000, weapons: 0 },
     };
     expect(decide(realm, rng()).soldiers).toBe(0);
   });
@@ -195,9 +198,58 @@ describe('decide', () => {
     const realm: Realm = {
       ...camp(),
       jobs: { farmer: 8, woodcutter: 0, miner: 0, builder: 1 },
-      stores: { food: 80, wood: 0, iron: 50, gold: 140 },
+      stores: { food: 80, wood: 0, iron: 50, gold: 140, weapons: 0 },
     };
     expect(decide(realm, rng()).soldiers).toBe(STRATEGY.trainPerYear);
+  });
+  describe('Forges and levels', () => {
+    /** A rich realm with nobody idle, so decide() trains no soldiers of its own. */
+    const rich = (soldiers: number, buildings: Partial<Realm['buildings']>): Realm => {
+      const realm = createRealm(1);
+      return {
+        ...realm,
+        idle: 0,
+        soldiers,
+        storehouse: 3,
+        buildings: { ...realm.buildings, barracks: 1, ...buildings },
+        stores: { food: 5000, wood: 6000, iron: 1200, gold: 4000, weapons: 0 },
+      };
+    };
+    const queued = (realm: Realm) => decide(realm, rng()).queue.map((o) => o.building);
+
+    it('orders one Forge per 10 soldiers, once there are 10', () => {
+      expect(queued(rich(9, {}))).not.toContain('forge');
+      expect(queued(rich(10, {}))).toContain('forge');
+      expect(queued(rich(25, { forge: 2 }))).toContain('forge');
+      expect(queued(rich(20, { forge: 2 }))).not.toContain('forge');
+    });
+
+    it('orders the next Forges level only once every soldier is armed', () => {
+      const armed = (weapons: number) => {
+        const realm = rich(5, { forge: 1 });
+        return { ...realm, stores: { ...realm.stores, weapons } };
+      };
+      expect(queued(armed(4.9))).not.toContain('forgeLevel');
+      expect(queued(armed(5))).toContain('forgeLevel');
+    });
+
+    it('orders no Forges level without a Forge', () => {
+      expect(queued(rich(0, {}))).not.toContain('forgeLevel');
+    });
+
+    it(`orders the next Huts or Markets level once ${STRATEGY.upgradeAfter} stand`, () => {
+      const few = STRATEGY.upgradeAfter - 1;
+      expect(queued(rich(0, { hut: few, market: few }))).not.toContain('hutLevel');
+      expect(queued(rich(0, { hut: few, market: few }))).not.toContain('marketLevel');
+      const many = queued(rich(0, { hut: STRATEGY.upgradeAfter, market: STRATEGY.upgradeAfter }));
+      expect(many).toEqual(expect.arrayContaining(['hutLevel', 'marketLevel']));
+    });
+
+    it('never queues two orders of one level kind', () => {
+      const realm = rich(0, { hut: STRATEGY.upgradeAfter });
+      const kinds = decide(decide(realm, rng()), rng()).queue.map((o) => o.building);
+      expect(kinds.filter((k) => k === 'hutLevel')).toHaveLength(1);
+    });
   });
 });
 
@@ -211,6 +263,7 @@ describe('formatTable', () => {
       'Wood',
       'Iron',
       'Gold',
+      'Weapons',
       'Pop',
       'Army',
       'Power',

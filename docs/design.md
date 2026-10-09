@@ -44,8 +44,9 @@ stronger rings, endlessly.
 |---|---|---|
 | Food | Farmers (1.5/s each), Fertile plains, loot | Every civilian (0.5/s), every soldier (1/s; cavalry 1.5/s), wagons (0.5/s) |
 | Wood | Woodcutters (0.8/s each), Forests, loot | Buildings, archers, wagons |
-| Iron | Miners (0.4/s each), Iron mines, loot | Spearmen, cavalry, Forge, Wall |
+| Iron | Miners (0.4/s each), Iron mines, loot | Spearmen, cavalry, Forges (weapons), Forge, Wall |
 | Gold | Tax (0.25/s per employed worker), Markets (+1/s each), Gold veins, loot | Soldier upkeep (0.5/s each; cavalry 1/s; wagons 0.25/s), training units, buildings, scouting, tribute |
+| Weapons | Forges (1 per 5 s each, from 2 iron) | Arm soldiers (§6); lost with soldiers who fall in battle |
 
 Every store has a cap set by the Storehouse level (§5). A store stops filling at
 its cap and anything over it is lost, whatever the source (production, loot,
@@ -56,10 +57,10 @@ Storehouse is upgraded.
 
 | | |
 |---|---|
-| Stores | 80 food, 40 wood, 10 iron, 40 gold |
+| Stores | 80 food, 40 wood, 10 iron, 40 gold, 0 weapons |
 | People | 3 idle, 4 farmers, 2 woodcutters, 0 miners, 1 builder, 0 soldiers |
 | Housing cap | 15 |
-| Store caps | 200 food, 200 wood, 50 iron, 150 gold (Storehouse level 0) |
+| Store caps | 200 food, 200 wood, 50 iron, 150 gold, 20 weapons (Storehouse level 0) |
 | Realm | Hearthmoor |
 | Map | Your capital only, nearby places and every rival capital visible |
 
@@ -97,24 +98,47 @@ it empties.
 
 ## 5. Buildings
 
-Each building's cost and build work grow with how many you already own
-(n = number built plus number already queued), rounded up to a whole number.
-Buildings with a level (Storehouse, Wall, Defence tower) are built once and then
-upgraded; for them n is the level being ordered, minus 1, and each level can be
-queued only after the one below it is built or queued.
+Building more of something and upgrading something are different:
+
+- **Build more** (Hut, Market, Forge): every one costs the same and takes the
+  same build work as the first, however many you own. You choose how many to
+  build (1–10); they go into the queue as one order with the cost and build
+  work × that number.
+- **Upgrade:** raised level by level, each level costing more and doing more.
+  Cost and build work grow with n = the level being ordered, minus 1, rounded
+  up to a whole number, and each level can be queued only after the one below
+  it is built or queued.
+  - **Huts, Markets and Forges** each have one level for all of that kind,
+    from 1 up to 5. Each level past 1 adds +50% of the level-1 effect (§5
+    Upgrades).
+  - **Storehouse, Wall and Defence tower** are built once and then upgraded.
+
+The build panel shows both on each row: Build with a count for Huts, Markets
+and Forges, and Upgrade to the next level wherever there is one.
 
 | Building | Cost | Build work | Needs | Effect |
 |---|---|---|---|---|
-| Hut | 25 × 1.3ⁿ wood | 20 × 1.2ⁿ | — | +5 housing |
-| Market | 40 × 1.5ⁿ wood, 30 × 1.5ⁿ gold | 40 × 1.2ⁿ | Storehouse level 1 | +1 gold/s |
+| Hut | 25 wood | 20 | — | +5 housing |
+| Market | 40 wood, 30 gold | 40 | Storehouse level 1 | +1 gold/s |
 | Barracks | 50 wood, 20 gold | 40 | 15 people | Trains Spearmen (§6) |
 | Archery range | 60 wood, 30 gold | 50 | Barracks | Trains Archers |
 | Stable | 80 wood, 10 iron, 40 gold | 60 | Barracks, a Horse pasture held (§8) | Trains Cavalry |
-| Forge | 60 × 2ⁿ wood, 20 × 2ⁿ iron | 60 × 1.2ⁿ | Barracks | +50% army power |
+| Forge | 60 wood, 20 iron | 60 | Barracks | Makes weapons (§6): 1 per 5 s from 2 iron |
 | Wall (levels 1–5) | 50 × 2ⁿ wood, 15 × 2ⁿ iron | 40 × 2ⁿ | Barracks | Capital defence +20% per level (§7) |
 | Defence tower (levels 1–3) | 40 × 2ⁿ wood, 20 × 2ⁿ gold | 40 × 2ⁿ | Wall level 1 | Each level allows one more scout level (§7) |
 
 Barracks, Archery range and Stable are built once each.
+
+### Upgrades
+
+| Upgrade | Cost (level n + 1) | Build work | Needs | Each level past 1 |
+|---|---|---|---|---|
+| Huts (levels 1–5) | 75 × 2ⁿ wood, 25 × 2ⁿ gold | 30 × 2ⁿ | A Hut | +2.5 housing per Hut |
+| Markets (levels 1–5) | 100 × 2ⁿ wood, 75 × 2ⁿ gold | 40 × 2ⁿ | A Market | +0.5 gold/s per Market |
+| Forges (levels 1–5) | 75 × 2ⁿ wood, 30 × 2ⁿ iron | 40 × 2ⁿ | A Forge | Armed soldiers +50% (§6) |
+
+Level 2 is the first one you buy: Huts level 2 costs 150 wood and 50 gold.
+Housing from Huts is rounded down for the realm as a whole.
 
 ### Builders and construction
 
@@ -256,8 +280,19 @@ A unit's **effective power** is its base power × its average multiplier,
 weighted by the enemy army's mix. For example, a spearman facing an army that
 is half cavalry, half archers fights at 2 × (0.5 × 1.5 + 0.5 × 0.67) ≈ 2.2.
 
-**Army power** = Σ effective power of every field unit × its slotted trait
-modifiers (§9) × (1 + 0.5 × forges). Units in garrisons don't count.
+**Weapons.** Forges make weapons (§5) into their own store, capped by the
+Storehouse like any other (§3). Each whole weapon in store arms one soldier,
+up to the number of soldiers. An armed soldier fights at × (1 + 0.5 × Forges
+level): × 1.5 at level 1, × 3.5 at level 5. Soldiers who fall in battle lose
+their weapons (their share of the armed ones); a disbanded or deserting
+soldier leaves the weapon in store. A Forge makes one weapon every 5 s from 2
+iron, and stops while iron runs out or the weapons store is full. Forges keep
+working until the store is full even when every soldier is armed, so spare
+weapons wait for new recruits; the iron in them is spent.
+
+**Army power** = Σ effective power of every field unit, × the weapon bonus for
+each armed one, × its slotted trait modifiers (§9). Units in garrisons don't
+count.
 
 Example: 20 Spearmen (base 40) against 20 Cavalry (base 60). Raw power says you
 lose (31%). With counters, your spearmen fight at 40 × 1.5 = 60 and their
@@ -295,13 +330,30 @@ learned about it (see Scouting).
   by its ring (table below), and its starting power is the ring's base power ×
   its level factor (Weak 0.5, Average 1, Strong 2, Elite 3). Ring 1's base is
   45, and each ring's base is 1.5× the last. The supply of rivals is endless.
-- Every rival gains +4% power per year.
+  Until map ring generation (§8) lands, a conquered rival is replaced by one
+  on the next ring out from it (up to ring 1,000).
+- Every rival grows by its level's rate each year and stops at its level's
+  power ceiling (Levels, below).
 
 ### Levels
 
 Rivals are not equal: each has a level, so you can pick a target your army can
-beat. The level sets the rival's defences. Growth rate and power ceiling per
-level are being tuned in #78.
+beat. The level sets the rival's growth, power ceiling and defences.
+
+| Level | Power factor | Ceiling | Growth/yr | Purpose |
+|---|---|---|---|---|
+| Weak | 0.5 | 2× start | 2% | Always beatable; the first conquest |
+| Average | 1 | 3× start | 3% | The mid-game goal |
+| Strong | 2 | 4× start | 4% | Needs conquests and traits first |
+| Elite | 3 | 5× start | 4% | Late game, outer rings |
+
+- **Ceiling:** a rival's power never goes above starting power × its level's
+  ceiling: not from yearly growth, a lost battle's +10% (Battle) or Golden age
+  (§9). Golden age raises the growth rate, not the ceiling. So time away (§14)
+  never makes the world unbeatable: after 8 hours every rival sits at its
+  ceiling, and the Weak starting rival tops out at 40, which 30 Spearmen with
+  armed soldiers at Forges level 1 (90 power) beat 84% of the time.
+- **Starting rivals** have ceilings 40 (Weak), 135 (Average) and 360 (Strong).
 
 | Ring | Weak | Average | Strong | Elite |
 |---|---|---|---|---|
@@ -322,6 +374,26 @@ so two rivals of the same level can differ; only scouting tells them apart.
 
 A rival's wall works like yours (§5): +20% defence per level when you attack
 its capital, not its sites.
+
+**Checked with the balance runner** (`npm run sim`, seeds 1–5, 200 years,
+with flat builds, upgrades and weapons, §5 and §6):
+
+- The first conquest comes on every seed, in years 30–44.
+- Strong rivals start out of reach: until the first conquest the scripted
+  player's best win chance against a Strong rival is at most 3%.
+- No rival ever goes above its ceiling.
+- Conquests: 5–7 per run. The longest stretch without one is 47–84 years,
+  counting the years after the last, so **N = 84** for the first 200 years.
+- The army ends at 36–67 soldiers; its power peaks at 427–601 between years
+  136 and 200. Population reaches 330–436.
+- Of the §9 milestones, 50 people, Storehouse level 3 and repel 5 raids are
+  reached on every seed; win 10 battles is not, by year 200.
+- **Past year 200 the gaps grow** (165–238 years by year 400): each conquest's
+  replacement sits one ring farther out, 1.5× stronger per ring and mostly
+  Strong or Elite, while the scripted army grows roughly in a straight line.
+  A smaller ring scale or kinder outer-ring odds only trim the gaps (to
+  130–190 years). Long-run pacing and the win 10 battles milestone are left
+  to the pacing pass (#38).
 
 ### Actions
 
@@ -531,7 +603,7 @@ With 30 mixed soldiers (factor 1.1): 3 × 1.1 ≈ 3.3 years there, 3.3 back. Wit
 - The army doesn't defend the capital, so raids on the capital face only the
   soldiers left at home.
 - Marching units eat 1.5× food (supply lines).
-- The target keeps growing (+4% power per year), so the win chance shown when
+- The target keeps growing (its level's rate, up to its ceiling, §7), so the win chance shown when
   you send the army (known only once scouting has revealed enough, §7) is
   projected to the arrival year.
 - You can recall the army at any point. It turns back and takes as long to
@@ -551,7 +623,11 @@ beyond its resource bonus.
 
 The map grows in rings around your starting capital. When you hold a place on
 the outermost ring, a new ring is generated beyond it, with more rivals (ring
-base power 1.5× the previous ring, §7) and richer sites.
+base power 1.5× the previous ring, §7) and richer sites. Each new rival rolls
+its level by its ring's odds (§7 Levels), weighted towards stronger levels the
+farther out it is: ring 1 has no Strong or Elite rivals, ring 4 and beyond no
+Weak ones. Every level keeps its ceiling, so each ring's rivals stop growing
+too.
 
 ## 9. Traits
 
@@ -590,7 +666,7 @@ Royal and Mythic hold one trait each until the pool grows (§13, §14).
 | Poison archers | Noble | Archers +50% power | Spearmen −20% power |
 | Horse lords | Noble | Cavalry +50% power, march −25% | Cavalry upkeep +50% |
 | Warrior creed | Royal | Army power +30% | No population growth while at peace with every rival |
-| Golden age | Mythic | All production and tax +25% | Rivals gain +6% power per year instead of +4% |
+| Golden age | Mythic | All production and tax +25% | Rivals gain +2% more power per year (up to their ceiling, §7) |
 
 - A unit-type bonus applies to that unit type's power only.
 - Modifiers on the same stat add up: +50% and −20% make +30%.
@@ -785,7 +861,17 @@ lines stay in the Chronicle and count toward its 200-line cap.
      gone: in the first 80 years army power peaks at 0.35–0.72 of the
      weakest rival's, and an attack needs 1.22 (a 60% win chance). Before
      construction it peaked at 0.79–1.17. Rival levels and power ceilings
-     (#78) are what make the first conquest reachable.
+     (#78) are what make the first conquest reachable. With them in place, the
+     first conquest comes on every seed (§7 Levels).
+
+   Rival levels, flat builds, upgrades and weapons (#78). Levels and
+   ceilings alone were not enough: with Huts at 25 × 1.3ⁿ wood, population
+   stopped at 120–170, the army at 108–222 power, and conquests came 1–6
+   times in 200 years with gaps of up to 132 years. Flat costs for building
+   more (§5), with upgrades for doing more, lift population to 330–436 and
+   the army to 427–601 power (§7 Levels). Forges used to add +50% army power
+   each; at a flat price that stacked without limit (1,800 power from 10
+   soldiers), so Forges now make weapons instead (§6).
 8. **Early attacks are blind.** The win chance needs exact power and unit mix
    (scout level 3, so Defence tower 2), so the first attacks are made without
    it. Intended, but worth checking in play.
