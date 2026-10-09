@@ -12,6 +12,8 @@ import {
   slotTrait,
   tick,
   train,
+  OFFER_MAX,
+  TRADER,
   type Realm,
 } from './realm.ts';
 import { createRng } from './rng.ts';
@@ -28,6 +30,9 @@ function played(): Realm {
   realm = gainTrait(gainTrait(realm, 'timberClans'), 'timberClans');
   realm = slotTrait(realm, 1, 'timberClans');
   realm = attack(realm, 0, createRng(7));
+  realm = build(realm, 'market');
+  // Storehouse 3 pays a milestone offer, and its food cap allows a food challenge.
+  realm = { ...realm, storehouse: 3 };
   return advance(realm, 600).realm;
 }
 
@@ -59,6 +64,10 @@ describe('save round trip', () => {
     const realm = played();
     expect(realm.chronicle.length).toBeGreaterThan(3);
     expect(realm.slots).toContain('timberClans');
+    expect(realm.offers.length).toBeGreaterThan(0);
+    expect(realm.trader.length).toBeGreaterThan(0);
+    expect(realm.milestones).toContain('storehouse');
+    expect(realm.battlesWon).toBeGreaterThan(0);
     expect(parse(serialize(realm))).toEqual(realm);
   });
 
@@ -77,6 +86,17 @@ describe('save round trip', () => {
     const realm = advance(played(), 8 * 60 * 60).realm;
     expect(realm.chronicle).toHaveLength(CHRONICLE_MAX);
     expect(parse(serialize(realm))).toEqual(realm);
+  });
+
+  it('restores an active challenge up to its furthest deadline', () => {
+    const realm = played();
+    for (const challenge of [
+      { kind: 'food' as const, deadline: realm.year + 3 },
+      { kind: 'raid' as const, deadline: realm.year + 6 },
+    ]) {
+      const next = { ...realm, challenge };
+      expect(parse(serialize(next))).toEqual(next);
+    }
   });
 
   it('writes the version', () => {
@@ -137,6 +157,14 @@ describe('parse rejects bad saves', () => {
     'traits',
     'slots',
     'slotReadyYear',
+    'battlesWon',
+    'raidsRepelled',
+    'milestones',
+    'offers',
+    'challenge',
+    'challengeYear',
+    'trader',
+    'traderYear',
     'chronicle',
   ])('a missing %s', (key) => {
     expect(parse(without([key]))).toBeNull();
@@ -204,6 +232,43 @@ describe('parse rejects bad saves', () => {
     ['slots', [null, '__proto__', null]],
     ['slotReadyYear', [1, 1]],
     ['slotReadyYear', [1, 0, 1]],
+    ['battlesWon', -1],
+    ['battlesWon', 1.5],
+    ['raidsRepelled', '5'],
+    ['milestones', {}],
+    ['milestones', ['sites']],
+    ['milestones', ['people', 'people']],
+    ['milestones', ['__proto__']],
+    ['milestones', ['people', 'battles', 'storehouse', 'raids', 'people']],
+    ['offers', {}],
+    [
+      'offers',
+      Array(OFFER_MAX + 1).fill({ source: 'challenge', choices: ['goldenAge', 'goldenAge'] }),
+    ],
+    ['offers', [null]],
+    ['offers', [{ source: 'trader', choices: ['goldenAge', 'goldenAge'] }]],
+    ['offers', [{ source: '__proto__', choices: ['goldenAge', 'goldenAge'] }]],
+    ['offers', [{ source: 'challenge', choices: ['goldenAge'] }]],
+    ['offers', [{ source: 'challenge', choices: ['goldenAge', 'goldenAge', 'goldenAge'] }]],
+    ['offers', [{ source: 'milestone', choices: ['goldenAge', 'goldenAge'] }]],
+    ['offers', [{ source: 'challenge', choices: ['goldenAge', 'dragonBlood'] }]],
+    ['offers', [{ source: 'challenge', choices: 'goldenAge' }]],
+    ['challenge', 'food'],
+    ['challenge', { kind: 'sites', deadline: 5 }],
+    ['challenge', { kind: 'food', deadline: 0 }],
+    ['challenge', { kind: 'food', deadline: 1e9 }], // further off than a fresh challenge's
+    ['challenge', { kind: 'raid', deadline: '5' }],
+    ['challengeYear', 0],
+    ['challengeYear', 1e9],
+    ['trader', {}],
+    ['trader', Array(TRADER.stock + 1).fill({ trait: 'timberClans', price: 200 })],
+    ['trader', [{ trait: 'timberClans', price: 149 }]], // below its tier range
+    ['trader', [{ trait: 'timberClans', price: 251 }]], // above it
+    ['trader', [{ trait: 'goldenAge', price: 200.5 }]],
+    ['trader', [{ trait: 'toString', price: 200 }]],
+    ['trader', [{ trait: 'goldenAge' }]],
+    ['traderYear', -1],
+    ['traderYear', 1e9], // after the current year
     ['chronicle', {}],
     ['chronicle', Array(CHRONICLE_MAX + 1).fill({ year: 1, kind: 'events', text: 'x' })],
     [['chronicle', 0, 'year'], 1e6], // after the current year
@@ -229,11 +294,31 @@ describe('parse against prototype pollution', () => {
       '"traits":{',
       '"traits":{"__proto__":{"level":5,"duplicates":0},"polluted":{"level":1,"duplicates":0},',
     );
-    const loaded = parse(traits)!;
+    const offers = traits.replace('"offers":[{', '"offers":[{"__proto__":{"polluted":true},');
+    expect(offers).not.toBe(traits);
+    const loaded = parse(offers)!;
     expect(loaded).toEqual(realm);
     expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
     expect(Object.getPrototypeOf(loaded.traits)).toBe(Object.prototype);
     expect(Object.keys(loaded)).not.toContain('extra');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('does not copy __proto__ keys from challenge or trader objects', () => {
+    const save = saved();
+    const realm = save.realm as Record<string, unknown>;
+    const year = realm.year as number;
+    realm.challenge = JSON.parse(
+      `{"__proto__":{"polluted":true},"kind":"raid","deadline":${year + 1}}`,
+    );
+    realm.trader = [
+      JSON.parse('{"__proto__":{"polluted":true},"trait":"timberClans","price":200}'),
+    ];
+    const loaded = parse(JSON.stringify(save))!;
+    expect(loaded.challenge).toEqual({ kind: 'raid', deadline: year + 1 });
+    expect(loaded.trader).toEqual([{ trait: 'timberClans', price: 200 }]);
+    expect(Object.getPrototypeOf(loaded.challenge)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(loaded.trader[0])).toBe(Object.prototype);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
