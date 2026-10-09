@@ -729,6 +729,27 @@ lines stay in the Chronicle and count toward its 200-line cap.
    and repeat penalty, the raid grace period and caps, and bandit loot (§7,
    §8). Builders also take peasants from paid jobs, which adds to the army's
    gold squeeze (#78).
+
+   Construction (§5), checked with the balance runner (#83), seeds 1–5, 200
+   years. The scripted player orders one of each building at a time (Barracks
+   first, then a Hut when housing is one Hut from full, Storehouse, Market,
+   and a Forge and Wall level once it has 10 soldiers), trains before it
+   staffs builders, and keeps one builder per 7 people while orders wait.
+   - Nothing stalls for good: population and the army still reach new highs
+     late in the run on every seed (the last in years 139–200), ending at
+     75–105 people and 15–33 soldiers. The longest stretch without a new
+     high is 50–79 years for the army and 38–121 for population (before
+     construction: 26–102 and 25–96).
+   - Milestones come about as before: 50 people in years 24–33 (was 27–30)
+     and Storehouse level 3 on seeds 2–5 (as before).
+   - The army is smaller (15–33 soldiers against 38–55) and starts later:
+     training waits for 15 people and a finished Barracks (about year 10,
+     against year 1 before).
+   - No seed conquers within 200 years. Seed 4's one conquest (year 33) is
+     gone: in the first 80 years army power peaks at 0.35–0.72 of the
+     weakest rival's, and an attack needs 1.22 (a 60% win chance). Before
+     construction it peaked at 0.79–1.17. Rival levels and power ceilings
+     (#78) are what make the first conquest reachable.
 8. **Early attacks are blind.** The win chance needs exact power and unit mix
    (scout level 3, so Defence tower 2), so the first attacks are made without
    it. Intended, but worth checking in play.

@@ -4,12 +4,28 @@ import { chance, createRng, int, pick, type Rng } from './rng.ts';
 export const RESOURCES = ['food', 'wood', 'iron', 'gold'] as const;
 export type Resource = (typeof RESOURCES)[number];
 
-export const JOBS = ['farmer', 'woodcutter', 'miner'] as const;
+/** Peasant jobs (docs/design.md §4); builders do the construction work of §5. */
+export const JOBS = ['farmer', 'woodcutter', 'miner', 'builder'] as const;
 export type Job = (typeof JOBS)[number];
 
-/** docs/design.md §5. */
-export const BUILDINGS = ['hut', 'market', 'forge'] as const;
+/** docs/design.md §5. Wall and Defence tower count levels, the others how many are built. */
+export const BUILDINGS = ['hut', 'market', 'barracks', 'forge', 'wall', 'tower'] as const;
 export type Building = (typeof BUILDINGS)[number];
+
+/** What can be ordered: every building, and the next Storehouse level (§5). */
+export const CONSTRUCTIONS = [...BUILDINGS, 'storehouse'] as const;
+export type Construction = (typeof CONSTRUCTIONS)[number];
+
+/** One order in the construction queue: its cost and build work are fixed when ordered (§5). */
+export interface Order {
+  building: Construction;
+  /** What was paid, refunded in full on cancel. */
+  cost: Cost;
+  /** Build work needed, in builder-seconds. */
+  work: number;
+  /** Build work done so far. */
+  done: number;
+}
 
 /** docs/design.md §9. */
 export const TRAITS = [
@@ -221,6 +237,8 @@ export interface Realm {
   buildings: Record<Building, number>;
   /** Storehouse level, from 0 (docs/design.md §5). */
   storehouse: number;
+  /** Construction orders, the first one being built (§5). */
+  queue: Order[];
   /** Housing gained from annexed rivals, +10 each (docs/design.md §7). */
   annexedHousing: number;
   rivals: Rival[];
@@ -280,14 +298,15 @@ export function createRealm(seed: number): Realm {
     time: 0,
     year: 1,
     stores: { food: 80, wood: 40, iron: 10, gold: 40 },
-    idle: 4,
-    jobs: { farmer: 4, woodcutter: 2, miner: 0 },
+    idle: 3,
+    jobs: { farmer: 4, woodcutter: 2, miner: 0, builder: 1 },
     growth: 0,
     hunger: 0,
     soldiers: 0,
     desertion: 0,
-    buildings: { hut: 0, market: 0, forge: 0 },
+    buildings: { hut: 0, market: 0, barracks: 0, forge: 0, wall: 0, tower: 0 },
     storehouse: 0,
+    queue: [],
     annexedHousing: 0,
     rivals: startingRivals(seed),
     traits: {},
@@ -550,7 +569,7 @@ export function raidRng(seed: number, n: number): Rng {
 
 /**
  * One raid on the capital (§7): a random hostile rival attacks with strength
- * E × (0.4–0.8). If field army power ≥ strength it is repelled; otherwise the
+ * E × (0.4–0.8). If capitalDefence() ≥ strength it is repelled; otherwise the
  * realm loses 25% of the food and wood above the Storehouse's safe amount.
  * Nothing happens while no rival is hostile.
  */
@@ -562,7 +581,7 @@ export function raid(realm: Realm, rng: Rng): Realm {
   // "Repel the next raid" (§9) ends with this raid, met or failed.
   const end = (next: Realm, met: boolean) =>
     realm.challenge?.kind === 'raid' ? endChallenge(next, met) : next;
-  if (armyPower(realm) >= strength) {
+  if (capitalDefence(realm) >= strength) {
     const next = { ...realm, raidsRepelled: realm.raidsRepelled + 1 };
     return end(chronicle(next, 'raids', `Repelled a raid from ${rival.name}.`), true);
   }
@@ -934,14 +953,29 @@ export function milestoneProgress(realm: Realm): MilestoneProgress[] {
 }
 
 /**
- * The "Next" hint in the Goals panel: the first milestone not yet reached,
- * with its progress; once all are reached, says so.
- *
- * TODO(#83 Builders and construction): once buildings have requirements, hint
- * the first locked building's requirement first ("Next: reach 15 people to
- * unlock the Barracks"), falling back to milestones.
+ * "reach 15 people", "build the Barracks" or "raise the Wall to level 1"; once
+ * the building is queued, "finish the Barracks" or "finish Wall level 1".
+ */
+function needGoal(realm: Realm, need: Need): string {
+  if ('people' in need) return `reach ${need.people} people`;
+  const { name, levelled } = CONSTRUCTION_INFO[need.building];
+  const ordered = built(realm, need.building) + queued(realm, need.building) >= need.level;
+  if (ordered) return levelled ? `finish ${name} level ${need.level}` : `finish the ${name}`;
+  return levelled ? `raise the ${name} to level ${need.level}` : `build the ${name}`;
+}
+
+/**
+ * The "Next" hint in the Goals panel (§9): the first locked building's first
+ * unmet requirement, in build-list order; then the first milestone not yet
+ * reached, with its progress; once all are reached, says so.
  */
 export function nextGoal(realm: Realm): string {
+  for (const c of CONSTRUCTIONS) {
+    const [need] = unmetNeeds(realm, c);
+    // A building already at its max stays built even if its requirement is lost (§5).
+    if (need && !atMax(realm, c))
+      return `Next: ${needGoal(realm, need)} to unlock the ${CONSTRUCTION_INFO[c].name}.`;
+  }
   const open = milestoneProgress(realm).find((p) => !p.reached);
   return open ? `Next: ${open.goal} (${open.count} / ${open.target}).` : 'Every milestone reached.';
 }
@@ -1113,6 +1147,9 @@ export const STOREHOUSE: readonly StorehouseLevel[] = [
   },
 ];
 
+/** Highest Storehouse level: far past any reachable one, and caps stay finite up to ~640. */
+export const STOREHOUSE_MAX = 500;
+
 /** Each level past the table multiplies the previous one's caps, safe amounts and cost by this. */
 export const STOREHOUSE_GROWTH = 3;
 
@@ -1141,11 +1178,6 @@ export function safeAmounts(realm: Realm): Record<Resource, number> {
   return storehouseLevel(realm.storehouse).safe;
 }
 
-/** What the next Storehouse level costs. */
-export function upgradeCost(realm: Realm): Cost {
-  return storehouseLevel(realm.storehouse + 1).cost;
-}
-
 /** True when every store holds at least its share of `cost`. */
 export function canAfford(realm: Realm, cost: Cost): boolean {
   return RESOURCES.every((k) => realm.stores[k] >= (cost[k] ?? 0));
@@ -1159,48 +1191,305 @@ export function pay(realm: Realm, cost: Cost): Realm {
   return { ...realm, stores };
 }
 
-/** Raises the Storehouse one level if its cost can be paid; otherwise nothing changes. */
-export function upgradeStorehouse(realm: Realm): Realm {
-  const cost = upgradeCost(realm);
-  if (!canAfford(realm, cost)) return realm;
-  const storehouse = realm.storehouse + 1;
-  return chronicle(
-    { ...pay(realm, cost), storehouse },
-    'buildings',
-    `Raised the Storehouse to level ${storehouse}.`,
-  );
+/** A requirement (§5): a whole population, or a finished building at a level. */
+export type Need = { people: number } | { building: Construction; level: number };
+
+interface ConstructionInfo {
+  name: string;
+  /** Cost and build work of the first one, each × its growthⁿ (§5). */
+  cost: Cost;
+  costGrowth: number;
+  work: number;
+  workGrowth: number;
+  /** Most that can be built, or the top level. */
+  max: number;
+  /** Built once and then upgraded level by level. */
+  levelled: boolean;
+  needs: Need[];
 }
 
-/** Base cost and growth per building owned (docs/design.md §5). */
-export const BUILDING_COSTS: Record<Building, { base: Cost; growth: number }> = {
-  hut: { base: { wood: 25 }, growth: 1.3 },
-  market: { base: { wood: 40, gold: 30 }, growth: 1.5 },
-  forge: { base: { wood: 60, iron: 20 }, growth: 2 },
+/**
+ * The building table of docs/design.md §5. The Storehouse's cost comes from its
+ * level table instead (storehouseLevel()).
+ *
+ * TODO(#85 Scouting levels and facts): each Defence tower level allows one more
+ * scout level; the tower can be built now but has no effect until then.
+ */
+export const CONSTRUCTION_INFO: Record<Construction, ConstructionInfo> = {
+  hut: {
+    name: 'Hut',
+    cost: { wood: 25 },
+    costGrowth: 1.3,
+    work: 20,
+    workGrowth: 1.2,
+    max: Infinity,
+    levelled: false,
+    needs: [],
+  },
+  market: {
+    name: 'Market',
+    cost: { wood: 40, gold: 30 },
+    costGrowth: 1.5,
+    work: 40,
+    workGrowth: 1.2,
+    max: Infinity,
+    levelled: false,
+    needs: [{ building: 'storehouse', level: 1 }],
+  },
+  barracks: {
+    name: 'Barracks',
+    cost: { wood: 50, gold: 20 },
+    costGrowth: 1,
+    work: 40,
+    workGrowth: 1,
+    max: 1,
+    levelled: false,
+    needs: [{ people: 15 }],
+  },
+  forge: {
+    name: 'Forge',
+    cost: { wood: 60, iron: 20 },
+    costGrowth: 2,
+    work: 60,
+    workGrowth: 1.2,
+    max: Infinity,
+    levelled: false,
+    needs: [{ building: 'barracks', level: 1 }],
+  },
+  wall: {
+    name: 'Wall',
+    cost: { wood: 50, iron: 15 },
+    costGrowth: 2,
+    work: 40,
+    workGrowth: 2,
+    max: 5,
+    levelled: true,
+    needs: [{ building: 'barracks', level: 1 }],
+  },
+  tower: {
+    name: 'Defence tower',
+    cost: { wood: 40, gold: 20 },
+    costGrowth: 2,
+    work: 40,
+    workGrowth: 2,
+    max: 3,
+    levelled: true,
+    needs: [{ building: 'wall', level: 1 }],
+  },
+  storehouse: {
+    name: 'Storehouse',
+    cost: {},
+    costGrowth: 1,
+    work: 30,
+    workGrowth: 2,
+    max: STOREHOUSE_MAX,
+    levelled: true,
+    needs: [],
+  },
 };
 
-/** Army power bonus per Forge (§6: power × (1 + 0.5 × forges)). */
-export const FORGE_BONUS = 0.5;
+/** Orders the construction queue holds at most (§5). */
+export const QUEUE_MAX = 5;
 
-/** What the next `building` costs: base × growthⁿ for n already built, rounded up. */
-export function buildingCost(realm: Realm, building: Building): Cost {
-  const { base, growth } = BUILDING_COSTS[building];
-  const by = growth ** realm.buildings[building];
+/** Capital defence against raids per Wall level (§7). */
+export const WALL_BONUS = 0.2;
+
+/** How many of `c` are built, or its level. */
+export function built(realm: Realm, c: Construction): number {
+  return c === 'storehouse' ? realm.storehouse : realm.buildings[c];
+}
+
+/** How many orders for `c` are in the queue. */
+export function queued(realm: Realm, c: Construction): number {
+  return realm.queue.filter((o) => o.building === c).length;
+}
+
+/**
+ * n for the next order of `c` (§5): built plus already queued. For a building
+ * with levels that is the level being ordered, minus 1.
+ */
+function nextN(realm: Realm, c: Construction): number {
+  return built(realm, c) + queued(realm, c);
+}
+
+/** What the next order of `c` costs: base × growthⁿ, rounded up; the Storehouse by its table. */
+export function orderCost(realm: Realm, c: Construction): Cost {
+  const n = nextN(realm, c);
+  if (c === 'storehouse') return storehouseLevel(n + 1).cost;
+  const { cost: base, costGrowth } = CONSTRUCTION_INFO[c];
   const cost: Cost = {};
-  for (const k of RESOURCES) if (base[k] !== undefined) cost[k] = Math.ceil(base[k] * by);
+  for (const k of RESOURCES)
+    if (base[k] !== undefined) cost[k] = Math.ceil(base[k] * costGrowth ** n);
   return cost;
 }
 
-/** Builds one `building` if its cost can be paid; otherwise nothing changes. */
-export function build(realm: Realm, building: Building): Realm {
-  const cost = buildingCost(realm, building);
-  if (!canAfford(realm, cost)) return realm;
-  const paid = pay(realm, cost);
-  const next = {
-    ...paid,
-    buildings: { ...paid.buildings, [building]: paid.buildings[building] + 1 },
-  };
-  return chronicle(next, 'buildings', `Built a ${building}.`);
+/** The build work of the next order of `c`: base × growthⁿ, rounded up (§5). */
+export function orderWork(realm: Realm, c: Construction): number {
+  const { work, workGrowth } = CONSTRUCTION_INFO[c];
+  return Math.ceil(work * workGrowth ** nextN(realm, c));
 }
+
+/** True when `need` is met; buildings count only once finished (§5). */
+function needMet(realm: Realm, need: Need): boolean {
+  return 'people' in need
+    ? population(realm) >= need.people
+    : built(realm, need.building) >= need.level;
+}
+
+/** "15 people", "Barracks" or "Wall level 1", for "Needs: …" (§5). */
+export function needText(need: Need): string {
+  if ('people' in need) return `${need.people} people`;
+  const { name, levelled } = CONSTRUCTION_INFO[need.building];
+  return levelled ? `${name} level ${need.level}` : name;
+}
+
+/** The requirements of `c` not yet met, empty once it is unlocked. */
+export function unmetNeeds(realm: Realm, c: Construction): Need[] {
+  return CONSTRUCTION_INFO[c].needs.filter((n) => !needMet(realm, n));
+}
+
+/** True once `c` is built (or queued) as many times, or to as high a level, as it can be. */
+export function atMax(realm: Realm, c: Construction): boolean {
+  return nextN(realm, c) >= CONSTRUCTION_INFO[c].max;
+}
+
+/** "a Hut" or "Wall level 2": the order of `c` that makes its `n`th one or level `n`. */
+function orderLabel(c: Construction, n: number, article = 'a '): string {
+  const { name, levelled } = CONSTRUCTION_INFO[c];
+  return levelled ? `${name} level ${n}` : `${article}${name}`;
+}
+
+/** True when an order of `c` would be taken now: queue room, below max, unlocked and affordable. */
+export function canOrder(realm: Realm, c: Construction): boolean {
+  return (
+    realm.queue.length < QUEUE_MAX &&
+    !atMax(realm, c) &&
+    unmetNeeds(realm, c).length === 0 &&
+    canAfford(realm, orderCost(realm, c))
+  );
+}
+
+/**
+ * Orders one `c` (§5): pays its cost and adds it to the end of the queue with
+ * its cost and build work fixed. Nothing changes if canOrder() is false.
+ */
+export function order(realm: Realm, c: Construction): Realm {
+  if (!canOrder(realm, c)) return realm;
+  const cost = orderCost(realm, c);
+  const label = orderLabel(c, nextN(realm, c) + 1);
+  const next = {
+    ...pay(realm, cost),
+    queue: [...realm.queue, { building: c, cost, work: orderWork(realm, c), done: 0 }],
+  };
+  return chronicle(next, 'buildings', `Ordered ${label}.`);
+}
+
+/**
+ * Cancels queue order `index` (§5) and refunds exactly what was paid; any refund
+ * past a store's cap is lost. Cancelling a level also cancels every higher
+ * level of the same building queued after it. Nothing changes if there is no
+ * such order.
+ */
+export function cancelOrder(realm: Realm, index: number): Realm {
+  const target = realm.queue[index];
+  if (!Number.isInteger(index) || !target) return realm;
+  const c = target.building;
+  const cascade = CONSTRUCTION_INFO[c].levelled;
+  const gone = (o: Order, i: number) => i === index || (cascade && i > index && o.building === c);
+  let next: Realm = { ...realm, queue: realm.queue.filter((o, i) => !gone(o, i)) };
+  // The k-th queued order of c makes built + k.
+  let n = built(realm, c);
+  realm.queue.forEach((o, i) => {
+    if (o.building === c) n++;
+    if (!gone(o, i)) return;
+    const stores = { ...next.stores };
+    for (const k of RESOURCES) stores[k] = addStore(next, k, o.cost[k] ?? 0);
+    next = chronicle({ ...next, stores }, 'buildings', `Cancelled ${orderLabel(c, n)}.`);
+  });
+  return next;
+}
+
+/** Build work done per second (§5): one per builder, × (1 − s) while starving (§4). */
+export function buildRate(realm: Realm): number {
+  return realm.jobs.builder * (1 - shortfall(realm));
+}
+
+/**
+ * Seconds until each queued order is done at the current build rate, counting
+ * the orders ahead of it; null while no work is being done (§5).
+ */
+export function timeLeft(realm: Realm): number[] | null {
+  const rate = buildRate(realm);
+  if (!(rate > 0)) return null;
+  let ahead = 0;
+  return realm.queue.map((o) => (ahead += o.work - o.done) / rate);
+}
+
+/** One queue row for the build panel (§5). */
+export interface OrderView {
+  /** "Hut" or "Wall level 2". */
+  label: string;
+  done: number;
+  work: number;
+  /** Seconds until done at the current build rate, counting the orders ahead; null with no builders. */
+  secondsLeft: number | null;
+}
+
+/** The queue as the build panel shows it: each order with its progress and time left (§5). */
+export function queueView(realm: Realm): OrderView[] {
+  const left = timeLeft(realm);
+  const made: Partial<Record<Construction, number>> = {};
+  return realm.queue.map((o, i) => {
+    const n = (made[o.building] = (made[o.building] ?? built(realm, o.building)) + 1);
+    return {
+      label: orderLabel(o.building, n, ''),
+      done: o.done,
+      work: o.work,
+      secondsLeft: left?.[i] ?? null,
+    };
+  });
+}
+
+/** Finishes the first order: the building takes effect and is written to the Chronicle (§5). */
+function finishOrder(realm: Realm): Realm {
+  const c = realm.queue[0]!.building;
+  const n = built(realm, c) + 1;
+  const queue = realm.queue.slice(1);
+  if (c === 'storehouse')
+    return chronicle(
+      { ...realm, queue, storehouse: n },
+      'buildings',
+      `Raised the Storehouse to level ${n}.`,
+    );
+  const next = { ...realm, queue, buildings: { ...realm.buildings, [c]: n } };
+  const { name, levelled } = CONSTRUCTION_INFO[c];
+  const text = levelled ? `Raised the ${name} to level ${n}.` : `Built a ${name}.`;
+  return chronicle(next, 'buildings', text);
+}
+
+/**
+ * Puts `work` builder-seconds into the queue (§5): all of it goes to the first
+ * order, and what is left once that one is done carries on to the next.
+ */
+function construct(realm: Realm, work: number): Realm {
+  let next = realm;
+  while (work > 0 && next.queue.length > 0) {
+    const first = next.queue[0]!;
+    const need = first.work - first.done;
+    // The epsilon keeps float noise in summed steps from leaving a sliver of work.
+    if (work >= need - 1e-9) {
+      next = finishOrder(next);
+      work -= need;
+    } else {
+      next = { ...next, queue: [{ ...first, done: first.done + work }, ...next.queue.slice(1)] };
+      work = 0;
+    }
+  }
+  return next;
+}
+
+/** Army power bonus per Forge (§6: power × (1 + 0.5 × forges)). */
+export const FORGE_BONUS = 0.5;
 
 /** The Forge multiplier on army power (§6). */
 export function forgeBonus(realm: Realm): number {
@@ -1222,8 +1511,14 @@ export function armyPower(realm: Realm): number {
   return realm.soldiers * SOLDIER.power * (1 + m.spearmen + m.army) * forgeBonus(realm);
 }
 
+/** What a raid on the capital must beat (§7): field army power × (1 + 0.2 × Wall level). */
+export function capitalDefence(realm: Realm): number {
+  return armyPower(realm) * (1 + WALL_BONUS * realm.buildings.wall);
+}
+
+/** Every peasant with a job, builders included; all of them pay tax (§3, §5). */
 export function workers(realm: Realm): number {
-  return realm.jobs.farmer + realm.jobs.woodcutter + realm.jobs.miner;
+  return JOBS.reduce((sum, job) => sum + realm.jobs[job], 0);
 }
 
 export function population(realm: Realm): number {
@@ -1256,8 +1551,10 @@ export function unassign(realm: Realm, job: Job, count = 1): Realm {
 /**
  * Trains up to `count` soldiers, each taking one idle peasant and paying
  * SOLDIER.cost; stops at the first one the idle pool or stores can't cover.
+ * Nothing is trained until a Barracks is finished (§6).
  */
 export function train(realm: Realm, count = 1): Realm {
+  if (realm.buildings.barracks === 0) return realm;
   let next = realm;
   for (let i = wholeCount(count); i > 0 && next.idle > 0 && canAfford(next, SOLDIER.cost); i--) {
     next = { ...pay(next, SOLDIER.cost), idle: next.idle - 1, soldiers: next.soldiers + 1 };
@@ -1308,12 +1605,12 @@ export function rates(realm: Realm): Record<Resource, number> {
 }
 
 /**
- * Removes one starving person (§4): idle peasants first, then miners,
+ * Removes one starving person (§4): idle peasants first, then builders, miners,
  * woodcutters and farmers (so farmers stay longest), then soldiers.
  */
 function loseOne(realm: Realm): Realm {
   if (realm.idle > 0) return { ...realm, idle: realm.idle - 1 };
-  for (const job of ['miner', 'woodcutter', 'farmer'] as const) {
+  for (const job of ['builder', 'miner', 'woodcutter', 'farmer'] as const) {
     if (realm.jobs[job] > 0)
       return { ...realm, jobs: { ...realm.jobs, [job]: realm.jobs[job] - 1 } };
   }
@@ -1352,6 +1649,9 @@ function loseOne(realm: Realm): Realm {
  * Events (§11): event number n lands at n × 25 s, rolled on eventRng(seed, n),
  * and splits the step the same way. When a raid and an event share a moment,
  * the raid comes first.
+ *
+ * Construction (§5): the queue gets buildRate() × dt of work, with the builders
+ * and shortfall at the start of the step.
  */
 export function tick(realm: Realm, dt: number): Realm {
   // An infinite step would split at raids forever; NaN would poison every store.
@@ -1424,7 +1724,7 @@ function step(realm: Realm, dt: number): Realm {
     desertion -= PEOPLE.desertEvery;
   }
 
-  next = { ...next, hunger, soldiers, desertion };
+  next = construct({ ...next, hunger, soldiers, desertion }, buildRate(realm) * dt);
   // Years, raids and events run in time order, so each meets the rivals and year of its moment.
   const toYear = (year: number) => {
     while (next.year < year) next = traitSources({ ...growRivals(next), year: next.year + 1 });

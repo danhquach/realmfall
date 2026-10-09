@@ -3,6 +3,7 @@ import {
   RESOURCES,
   createRealm,
   housingCap,
+  PEOPLE,
   population,
   rates,
   STOREHOUSE,
@@ -53,6 +54,11 @@ describe('simulate', () => {
 
 describe('decide', () => {
   const rng = () => createRng(99);
+  /** A new realm with a finished Barracks, so it can train. */
+  const camp = (): Realm => {
+    const realm = createRealm(1);
+    return { ...realm, buildings: { ...realm.buildings, barracks: 1 } };
+  };
 
   it('takes the first choice of every pending trait offer and slots it', () => {
     const offers: Realm['offers'] = [
@@ -91,52 +97,95 @@ describe('decide', () => {
     const realm: Realm = {
       ...createRealm(1),
       idle: 6,
-      jobs: { farmer: 0, woodcutter: 0, miner: 0 },
+      jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 },
     };
     const next = decide(realm, rng());
     expect(next.idle).toBe(0);
     expect(rates(next).food).toBeGreaterThanOrEqual(STRATEGY.foodMargin);
   });
 
-  it('builds a hut when housing is full and wood allows', () => {
+  it('orders a Hut when housing is one Hut from full and wood allows', () => {
     const base = createRealm(1);
     const realm: Realm = {
       ...base,
-      idle: housingCap(base) - population(base) + base.idle,
+      idle: housingCap(base) - PEOPLE.hutHousing - population(base) + base.idle,
       stores: { ...base.stores, wood: 100, gold: 0 },
     };
-    expect(decide(realm, rng()).buildings.hut).toBe(1);
+    expect(decide(realm, rng()).queue.map((o) => o.building)).toEqual(['hut']);
+    const roomy = { ...realm, idle: realm.idle - 1 };
+    expect(decide(roomy, rng()).queue).toEqual([]);
   });
 
-  it('raises the Storehouse when a store is nearly full', () => {
+  it('orders the next Storehouse level when a store is nearly full', () => {
     const base = createRealm(1);
     const realm: Realm = {
       ...base,
       stores: { ...STOREHOUSE[0]!.caps }, // every store at its level-0 cap
     };
-    expect(decide(realm, rng()).storehouse).toBe(1);
+    expect(decide(realm, rng()).queue.map((o) => o.building)).toContain('storehouse');
+  });
+
+  it('orders the Barracks once 15 people live in the realm, and only once', () => {
+    const base = createRealm(1);
+    const realm: Realm = { ...base, idle: 8, stores: { ...base.stores, wood: 100, gold: 100 } };
+    expect(population(realm)).toBe(15);
+    const next = decide(realm, rng());
+    expect(next.queue.filter((o) => o.building === 'barracks')).toHaveLength(1);
+    expect(decide(next, rng()).queue.filter((o) => o.building === 'barracks')).toHaveLength(1);
+    expect(decide({ ...realm, idle: 7 }, rng()).queue.map((o) => o.building)).not.toContain(
+      'barracks',
+    );
+  });
+
+  it('never queues two orders of the same kind', () => {
+    let realm: Realm = { ...camp(), idle: 30, storehouse: 3, soldiers: 20 };
+    realm = { ...realm, stores: { food: 5000, wood: 6000, iron: 1200, gold: 4000 } };
+    realm = decide(decide(realm, rng()), rng());
+    const kinds = realm.queue.map((o) => o.building);
+    expect(new Set(kinds).size).toBe(kinds.length);
+    expect(kinds).toEqual(expect.arrayContaining(['market', 'forge', 'wall']));
+  });
+
+  it(`keeps one builder per ${STRATEGY.peoplePerBuilder} people while orders wait, one otherwise`, () => {
+    const busy = { ...createRealm(1), idle: 30 };
+    const want = Math.floor(population(busy) / STRATEGY.peoplePerBuilder);
+    expect(decide(busy, rng()).queue.length).toBeGreaterThan(0);
+    expect(decide(busy, rng()).jobs.builder).toBe(want);
+    const quiet: Realm = {
+      ...createRealm(1),
+      stores: { food: 80, wood: 0, iron: 0, gold: 0 },
+      jobs: { farmer: 4, woodcutter: 2, miner: 0, builder: 5 },
+    };
+    const next = decide(quiet, rng());
+    expect(next.queue).toEqual([]);
+    expect(next.jobs.builder).toBe(1);
+  });
+
+  it('trains no soldier before a Barracks stands', () => {
+    const realm: Realm = { ...createRealm(1), stores: { food: 80, wood: 0, iron: 50, gold: 140 } };
+    expect(decide(realm, rng()).soldiers).toBe(0);
   });
 
   it('trains on thin income only while the gold stockpile covers the shortfall', () => {
-    // 2 workers pay 0.5 gold/s; with a second soldier, upkeep makes that −0.5/s,
-    // so 10 years (80 s) of shortfall needs 40 gold in hand. Food stays level.
+    // 5 workers pay 1.25 gold/s; with a third soldier, upkeep makes that −0.25/s,
+    // so 10 years (80 s) of shortfall needs 20 gold left after the 10 gold train cost.
     const realm: Realm = {
-      ...createRealm(1),
+      ...camp(),
       idle: 1,
-      soldiers: 1,
-      jobs: { farmer: 2, woodcutter: 0, miner: 0 },
-      stores: { food: 80, wood: 0, iron: 50, gold: 39 },
+      soldiers: 2,
+      jobs: { farmer: 4, woodcutter: 0, miner: 0, builder: 1 },
+      stores: { food: 80, wood: 0, iron: 50, gold: 29 },
     };
-    expect(decide(realm, rng()).soldiers).toBe(1);
-    const stocked = { ...realm, stores: { ...realm.stores, gold: 60 } };
-    expect(decide(stocked, rng()).soldiers).toBe(2);
+    expect(decide(realm, rng()).soldiers).toBe(2);
+    const stocked = { ...realm, stores: { ...realm.stores, gold: 30 } };
+    expect(decide(stocked, rng()).soldiers).toBe(3);
   });
 
   it('trains no soldier the food cannot feed', () => {
     // 2 farmers exactly feed 6 civilians; a soldier would eat 0.5/s more than they did.
     const realm: Realm = {
-      ...createRealm(1),
-      jobs: { farmer: 2, woodcutter: 0, miner: 0 },
+      ...camp(),
+      jobs: { farmer: 2, woodcutter: 0, miner: 0, builder: 1 },
       stores: { food: 80, wood: 0, iron: 50, gold: 1000 },
     };
     expect(decide(realm, rng()).soldiers).toBe(0);
@@ -144,8 +193,8 @@ describe('decide', () => {
 
   it('trains at most its yearly quota', () => {
     const realm: Realm = {
-      ...createRealm(1),
-      jobs: { farmer: 8, woodcutter: 0, miner: 0 },
+      ...camp(),
+      jobs: { farmer: 8, woodcutter: 0, miner: 0, builder: 1 },
       stores: { food: 80, wood: 0, iron: 50, gold: 140 },
     };
     expect(decide(realm, rng()).soldiers).toBe(STRATEGY.trainPerYear);
