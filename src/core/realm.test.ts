@@ -17,6 +17,12 @@ import {
   RIVAL,
   RIVAL_ACTIONS,
   RAID,
+  EVENT,
+  EVENTS,
+  applyEvent,
+  eventRng,
+  possibleEvents,
+  randomEvent,
   raid,
   raidRng,
   canAfford,
@@ -63,6 +69,15 @@ const atPeace = (realm: Realm): Realm => ({
   rivals: realm.rivals.map((r) => ({ ...r, hostile: false })),
 });
 
+/**
+ * Runs `seconds` of 0.25 s ticks with the clock rewound before each, so no
+ * year, raid or event (§11) lands: for tests of the economy alone.
+ */
+const untimed = (realm: Realm, seconds: number): Realm => {
+  for (let t = 0; t < seconds; t += 0.25) realm = tick({ ...realm, time: 0 }, 0.25);
+  return realm;
+};
+
 describe('rates', () => {
   it('opens with a thin +1.0 food/s surplus (design §3)', () => {
     const r = rates(createRealm(1));
@@ -98,8 +113,9 @@ describe('tick', () => {
   });
 
   it('never drives a store below zero', () => {
+    // One big step, ending before the first event at 25 s.
     const realm = { ...createRealm(1), soldiers: 50 };
-    const next = tick(realm, 1000);
+    const next = tick(realm, EVENT.every - 1);
     expect(next.stores.food).toBe(0);
     expect(next.stores.gold).toBe(0);
   });
@@ -350,10 +366,7 @@ describe('growth (design §4)', () => {
 });
 
 describe('starvation (design §4)', () => {
-  const run = (realm: Realm, seconds: number) => {
-    for (let t = 0; t < seconds; t += 0.25) realm = tick(realm, 0.25);
-    return realm;
-  };
+  const run = untimed;
   const empty = { food: 0, wood: 0, iron: 0, gold: 1000 };
 
   it('s is 0 while any food is left or production covers what is eaten', () => {
@@ -402,7 +415,7 @@ describe('starvation (design §4)', () => {
     };
     const lost: string[] = [];
     for (let i = 0; i < 400 && population(realm) > 0; i++) {
-      const next = tick(realm, 0.25);
+      const next = untimed(realm, 0.25);
       if (next.idle < realm.idle) lost.push('idle');
       for (const job of ['miner', 'woodcutter', 'farmer'] as const) {
         if (next.jobs[job] < realm.jobs[job]) lost.push(job);
@@ -558,9 +571,9 @@ describe('store caps (design §3)', () => {
       idle: 0,
       jobs: { farmer: 20, woodcutter: 10, miner: 10 },
     };
-    const next = tick(realm, 1000);
+    const next = untimed(realm, 1000);
     expect(next.stores).toEqual({ food: 200, wood: 200, iron: 50, gold: 150 });
-    expect(tick(next, 10).stores).toEqual(next.stores);
+    expect(untimed(next, 10).stores).toEqual(next.stores);
   });
 
   it('clamps a store already over its cap down to the cap', () => {
@@ -575,7 +588,7 @@ describe('store caps (design §3)', () => {
       // 12 farmers feed all 36 people, so starvation never cuts wood.
       jobs: { farmer: 12, woodcutter: 20, miner: 0 },
     };
-    expect(tick(realm, 1000).stores.wood).toBe(2000);
+    expect(untimed(realm, 1000).stores.wood).toBe(2000);
   });
 });
 
@@ -1662,8 +1675,10 @@ describe('raids (design §7)', () => {
     const realm = target(0, 100, 300, 300);
     const peace = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: false })) };
     expect(raid(peace, rolls(0, 0.999999))).toBe(peace);
-    const after = tick(peace, RAID.every * 3);
-    expect(after.chronicle).toHaveLength(0);
+    // With no rival at all, no Change of heart (§11) can make one hostile: events land, raids never.
+    const lines = tick({ ...peace, rivals: [] }, RAID.every * 3).chronicle.map((c) => c.text);
+    expect(lines).toHaveLength(5);
+    expect(lines.filter((t) => /raid/i.test(t))).toEqual([]);
   });
 
   it('picks only among hostile rivals', () => {
@@ -1678,21 +1693,26 @@ describe('raids (design §7)', () => {
   });
 
   it('tick raids once every 45 s of game time, rolled on raidRng(seed, n)', () => {
-    // 5 food stops growth and sits under the safe amount, so only wood moves.
+    // No one works, so only raids and events (§11) move the stores.
     const realm = target(0, 100, 5, 300, 1);
     const frozen = { ...realm, idle: 0, jobs: { farmer: 0, woodcutter: 0, miner: 0 } };
-    expect(tick(frozen, RAID.every - 0.25).chronicle).toHaveLength(0);
+    const raids = (r: Realm) => r.chronicle.filter((c) => /raided|Repelled a raid/.test(c.text));
+    expect(raids(tick(frozen, RAID.every - 0.25))).toHaveLength(0);
     let stepped = frozen;
     for (let t = 0; t < RAID.every * 2; t += 0.25) stepped = tick(stepped, 0.25);
-    expect(stepped.chronicle).toHaveLength(2);
-    // One big step runs the same two raids as many small ones.
+    expect(raids(stepped)).toHaveLength(2);
+    // One big step runs the same two raids as many small ones. (The harvest at 25 s
+    // lets peasants grow, which a big step counts coarsely, so food can drift.)
     const big = tick(frozen, RAID.every * 2);
-    expect(big.chronicle).toEqual(stepped.chronicle);
+    const other = (r: Realm) => r.chronicle.filter((c) => !/raided|Repelled a raid/.test(c.text));
+    expect(other(big)).toEqual(other(stepped));
     expect(big.stores.wood).toBeCloseTo(stepped.stores.wood, 9);
-    expect(big.chronicle.map((c) => c.year)).toEqual([6, 12]);
-    // The first raid matches a direct roll on raidRng(seed, 1).
-    const first = raid({ ...frozen, time: RAID.every }, raidRng(frozen.seed, 1));
-    expect(stepped.chronicle[0]!.text).toBe(first.chronicle[0]!.text);
+    expect(raids(big).map((c) => c.year)).toEqual([6, 12]);
+    // The first raid matches a direct roll on raidRng(seed, 1): same raider, same wood taken.
+    const at25 = tick(frozen, EVENT.every);
+    const first = raid({ ...at25, time: RAID.every, year: 6 }, raidRng(frozen.seed, 1));
+    const who = (text: string) => text.replace(/lost \d+ food/, '');
+    expect(who(raids(stepped)[0]!.text)).toBe(who(first.chronicle.at(-1)!.text));
   });
 
   it('replays the same raids from the same seed', () => {
@@ -1706,5 +1726,139 @@ describe('raids (design §7)', () => {
     expect(run(42)).toEqual(run(42));
     expect(raidRng(42, 1)()).not.toBe(raidRng(42, 2)());
     expect(raidRng(42, 1)()).not.toBe(raidRng(43, 1)());
+  });
+});
+
+describe('events (design §11)', () => {
+  const roll = (value: number) => () => value;
+  /** Seed 5 with 4 idle and 6 workers: population 10, under every cap. */
+  const base = (): Realm => ({ ...createRealm(5), storehouse: 1 });
+  const last = (r: Realm) => r.chronicle.at(-1)!;
+
+  it('Bountiful harvest gives 50 + 3 × population food', () => {
+    const realm = base();
+    const after = applyEvent(realm, 'harvest', roll(0));
+    expect(after.stores.food).toBe(80 + 50 + 3 * 10);
+    expect(last(after)).toEqual({ year: 1, text: 'Bountiful harvest: +80 food.' });
+  });
+
+  it("Envoy's gifts give 40 gold and Rich vein 15 iron", () => {
+    const realm = base();
+    const envoy = applyEvent(realm, 'envoy', roll(0));
+    expect(envoy.stores).toEqual({ ...realm.stores, gold: 80 });
+    expect(last(envoy).text).toBe("Envoy's gifts: +40 gold.");
+    const vein = applyEvent(realm, 'vein', roll(0));
+    expect(vein.stores).toEqual({ ...realm.stores, iron: 25 });
+    expect(last(vein).text).toBe('Rich vein: +15 iron.');
+  });
+
+  it('gains stop at the store cap and say only what was kept (§3)', () => {
+    const realm = { ...createRealm(5), stores: { food: 190, wood: 0, iron: 50, gold: 140 } };
+    const harvest = applyEvent(realm, 'harvest', roll(0));
+    expect(harvest.stores.food).toBe(200);
+    expect(last(harvest).text).toBe('Bountiful harvest: +10 food.');
+    expect(applyEvent(realm, 'vein', roll(0)).stores.iron).toBe(50);
+    expect(last(applyEvent(realm, 'vein', roll(0))).text).toBe('Rich vein: +0 iron.');
+    expect(applyEvent(realm, 'envoy', roll(0)).stores.gold).toBe(150);
+    // A store already over its cap is never lowered.
+    const over = { ...realm, stores: { ...realm.stores, gold: 900 } };
+    expect(applyEvent(over, 'envoy', roll(0)).stores.gold).toBe(900);
+  });
+
+  it('Plague takes 2 people, idle first and farmers last', () => {
+    const realm = { ...base(), idle: 1, jobs: { farmer: 3, woodcutter: 2, miner: 1 } };
+    const after = applyEvent(realm, 'plague', roll(0));
+    expect(population(after)).toBe(population(realm) - 2);
+    expect(after.idle).toBe(0);
+    expect(after.jobs).toEqual({ farmer: 3, woodcutter: 2, miner: 0 });
+    expect(last(after).text).toBe('Plague: 2 people died.');
+  });
+
+  it('Plague is skipped while population ≤ 6', () => {
+    const six = { ...base(), idle: 0, jobs: { farmer: 4, woodcutter: 2, miner: 0 } };
+    expect(population(six)).toBe(6);
+    expect(possibleEvents(six)).not.toContain('plague');
+    expect(possibleEvents({ ...six, idle: 1 })).toContain('plague');
+    // Every roll still lands one of the other four events; none is a plague.
+    for (const value of [0, 0.2, 0.4, 0.6, 0.8, 0.999999]) {
+      const after = randomEvent(six, roll(value));
+      expect(population(after)).toBe(6);
+      expect(after.chronicle).toHaveLength(1);
+      expect(last(after).text).not.toMatch(/Plague/);
+    }
+  });
+
+  it('Change of heart flips a random rival between hostile and at peace', () => {
+    const realm = base();
+    const rivals = realm.rivals.map((r, i) => ({ ...r, hostile: i === 1 }));
+    const peaceful = { ...realm, rivals };
+    // Roll 0 picks rival 0 (at peace), the top roll rival 2, the middle one rival 1 (hostile).
+    const turned = applyEvent(peaceful, 'changeOfHeart', roll(0));
+    expect(turned.rivals.map((r) => r.hostile)).toEqual([true, true, false]);
+    expect(last(turned).text).toBe(`Change of heart: ${rivals[0]!.name} turned hostile.`);
+    const calmed = applyEvent(peaceful, 'changeOfHeart', roll(0.5));
+    expect(calmed.rivals.map((r) => r.hostile)).toEqual([false, false, false]);
+    expect(last(calmed).text).toBe(`Change of heart: ${rivals[1]!.name} is now at peace.`);
+    expect(applyEvent(peaceful, 'changeOfHeart', roll(0.999999)).rivals[2]!.hostile).toBe(true);
+    // Only `hostile` changes.
+    expect({ ...turned.rivals[0]!, hostile: false }).toEqual(rivals[0]);
+  });
+
+  it('picks each of the five events, equally likely', () => {
+    const realm = base();
+    expect(possibleEvents(realm)).toEqual([...EVENTS]);
+    const titles = [0, 0.2, 0.4, 0.6, 0.8].map((v) => last(randomEvent(realm, roll(v))).text);
+    expect(titles.map((t) => t.split(':')[0])).toEqual([
+      'Bountiful harvest',
+      'Plague',
+      "Envoy's gifts",
+      'Rich vein',
+      'Change of heart',
+    ]);
+  });
+
+  it('tick runs one event every 25 s of game time, rolled on eventRng(seed, n)', () => {
+    const realm = atPeace(base());
+    const events = (r: Realm) => r.chronicle.filter((c) => !/raid/.test(c.text));
+    expect(events(tick(realm, EVENT.every - 0.25))).toHaveLength(0);
+    let stepped = realm;
+    for (let t = 0; t < EVENT.every * 4; t += 0.25) stepped = tick(stepped, 0.25);
+    expect(events(stepped)).toHaveLength(4);
+    // Events take the year of their moment: 25 s is in year 4, 50 s in year 7.
+    expect(events(stepped).map((c) => c.year)).toEqual([4, 7, 10, 13]);
+    // The first event is the one a direct roll on eventRng(seed, 1) picks.
+    const first = randomEvent(realm, eventRng(realm.seed, 1));
+    const title = (text: string) => text.split(':')[0];
+    expect(title(events(stepped)[0]!.text)).toBe(title(last(first).text));
+  });
+
+  it('a big step splits at each event, matching steps of exactly 25 s', () => {
+    const realm = atPeace(base());
+    let split = realm;
+    for (let i = 0; i < 12; i++) split = tick(split, EVENT.every);
+    expect(tick(realm, EVENT.every * 12)).toEqual(split);
+  });
+
+  it('a raid lands before an event at the same moment (225 s)', () => {
+    const realm = createRealm(5);
+    const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
+    const before = tick(hostile, 225 - 0.25);
+    const after = tick(before, 0.25);
+    const added = after.chronicle.slice(before.chronicle.length).map((c) => c.text);
+    expect(added).toHaveLength(2);
+    expect(added[0]).toMatch(/raid/);
+    expect(added[1]).not.toMatch(/raid/);
+  });
+
+  it('replays the same events from the same seed', () => {
+    const run = (seed: number) => {
+      let r = atPeace(createRealm(seed));
+      for (let t = 0; t < EVENT.every * 10; t += 0.25) r = tick(r, 0.25);
+      return r.chronicle;
+    };
+    expect(run(42)).toEqual(run(42));
+    expect(eventRng(42, 1)()).not.toBe(eventRng(42, 2)());
+    expect(eventRng(42, 1)()).not.toBe(eventRng(43, 1)());
+    expect(eventRng(42, 1)()).not.toBe(raidRng(42, 1)());
   });
 });

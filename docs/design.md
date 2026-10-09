@@ -419,6 +419,9 @@ One random event every 25 s, written to the Chronicle:
 | Rich vein | +15 iron |
 | Change of heart | A random rival flips between hostile and at peace |
 
+Each event is equally likely. While Plague can't happen, the event is one of
+the other four.
+
 ## 12. Chronicle
 
 Every meaningful change is written as one line, tagged with the year:
