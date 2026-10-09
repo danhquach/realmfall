@@ -148,3 +148,27 @@ button:focus-visible {
 .report:empty {
   display: none;
 }
+.chronicle {
+  margin-top: 16px;
+}
+.chronicle ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 20em;
+  overflow-y: auto;
+}
+.chronicle li {
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+.chronicle li:first-child {
+  border-top: 0;
+}
+.chronicle .year {
+  color: var(--muted);
+}
+.chronicle ol:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
