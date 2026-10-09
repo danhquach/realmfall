@@ -1,17 +1,22 @@
-import { advance, parseSpeed } from './core/loop.ts';
+import { advance, catchUp, parseSpeed } from './core/loop.ts';
 import { createRealm, type Realm } from './core/realm.ts';
 import { createRng } from './core/rng.ts';
 import { mountChronicle } from './ui/chronicle.ts';
 import { mountRealmPanels } from './ui/realmPanels.ts';
-import { loadRealm, saveRealm, startAutosave } from './storage/autosave.ts';
+import { loadSave, saveRealm, startAutosave } from './storage/autosave.ts';
 
 const root = document.getElementById('app');
 if (!root) throw new Error('#app missing');
 
-// A saved realm resumes exactly; with none, or a bad one, a new run starts.
-// Its seed comes from the platform's random source; Math.random is banned.
-// TODO(#22 Offline progress): simulate the time away since the save here.
-let realm = loadRealm() ?? createRealm(crypto.getRandomValues(new Uint32Array(1))[0]!);
+// A saved realm resumes after replaying the time away since it was saved; with
+// none, or a bad one, a new run starts. Its seed comes from the platform's
+// random source; Math.random is banned.
+const saved = loadSave();
+let realm = saved
+  ? catchUp(saved.realm, saved.savedAt === null ? 0 : (Date.now() - saved.savedAt) / 1000)
+  : createRealm(crypto.getRandomValues(new Uint32Array(1))[0]!);
+// Stamp the replayed realm at once, so a crash before the next autosave can't replay it twice.
+if (saved) saveRealm(realm);
 // Battles the player starts roll on their own stream, seeded the same way.
 const battleRng = createRng(crypto.getRandomValues(new Uint32Array(1))[0]!);
 

@@ -11,6 +11,7 @@ import {
   armyPower,
   assign,
   attack,
+  awaySummary,
   BATTLE,
   build,
   buildingCost,
@@ -187,6 +188,11 @@ describe('tick purity and time', () => {
     const before = structuredClone(realm);
     tick(realm, 0.25);
     expect(realm).toEqual(before);
+  });
+
+  it.each([Infinity, -Infinity, NaN])('returns the realm unchanged for a %s step', (dt) => {
+    const realm = createRealm(3);
+    expect(tick(realm, dt)).toBe(realm);
   });
 
   it('1 000 ticks of 0.25 s equal 250 s of game time', () => {
@@ -2031,6 +2037,7 @@ describe('Chronicle (design §12)', () => {
       [upgradeTrait(slotted, 'fertileValleys'), slotted, ['traits']],
       [sellDuplicate(slotted, 'fertileValleys'), slotted, ['traits']],
       [slotTrait(slotted, 0, 'goldenAge'), slotted, ['traits']],
+      [awaySummary(base, base, 3600), base, ['away']],
     ];
     for (const [after, before, expected] of cases) expect(kinds(after, before)).toEqual(expected);
     const seen = new Set(cases.flatMap(([a, b]) => kinds(a, b)));
@@ -2052,7 +2059,8 @@ describe('Chronicle (design §12)', () => {
 describe('chronicleView (design §12)', () => {
   const entry = (i: number) => ({
     year: 1 + Math.floor(i / 3),
-    kind: CHRONICLE_KINDS[i % CHRONICLE_KINDS.length]!,
+    // A fixed rotation, so adding a kind doesn't reshuffle these fixtures.
+    kind: (['events', 'raids', 'battles', 'rivals', 'buildings', 'traits'] as const)[i % 6]!,
     text: `line ${i}`,
   });
 

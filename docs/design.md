@@ -440,6 +440,7 @@ lines stay in the Chronicle and count toward its 200-line cap.
 | Rivals    | Scouting, tribute and Change of heart                         |
 | Buildings | Buildings raised and Storehouse upgrades                      |
 | Traits    | Trait gains, duplicates, slots, swaps, upgrades and sales     |
+| Away      | The offline progress summary (§14)                            |
 
 ## 13. Known issues from the prototype
 
@@ -463,7 +464,9 @@ Ordered by how much they add to the endless loop:
    save that is missing, of another version or fails validation starts a new
    game. On return, simulate the time away (capped, e.g. 8 h) in the same fixed
    0.25 s steps as live play, so store caps, growth and hunger behave exactly
-   as they would online, and write a Chronicle summary.
+   as they would online, and write a Chronicle summary: time away, the change
+   in each store, people and soldiers. Absences under a minute (a reload) are
+   replayed without a line.
 2. **Bigger trait pool and trait synergies.** More traits per tier, and some
    pairs of slotted traits combine into a stronger effect (e.g. Dwarven smiths
    + Horse lords → Ironclad cavalry).

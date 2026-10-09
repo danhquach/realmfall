@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CATCHUP, STEP, advance, parseSpeed } from './loop.ts';
-import { createRealm, tick } from './realm.ts';
+import { AWAY_SUMMARY_MIN, MAX_CATCHUP, STEP, advance, catchUp, parseSpeed } from './loop.ts';
+import {
+  CHRONICLE_MAX,
+  RESOURCES,
+  awaySummary,
+  createRealm,
+  storeCaps,
+  tick,
+  train,
+  type Realm,
+} from './realm.ts';
+import { SAVE_LIMITS, parse, serialize } from './save.ts';
 
 describe('parseSpeed', () => {
   it.each([
@@ -70,5 +80,108 @@ describe('advance', () => {
     const { realm, pending } = advance(start, value);
     expect(realm).toBe(start);
     expect(pending).toBe(0);
+  });
+});
+
+/** A run with no farmers, a soldier and a hostile rival: wood hits its cap, food runs out, raids land. */
+function busy(seed: number): Realm {
+  const realm = createRealm(seed);
+  const jobs = { farmer: 0, woodcutter: 8, miner: 1 };
+  const stores = { food: 50, wood: 190, iron: 20, gold: 100 };
+  const rivals = realm.rivals.map((r, i) => ({ ...r, hostile: i === 0 }));
+  return train({ ...realm, jobs, idle: 1, stores, rivals }, 1);
+}
+
+describe('catchUp', () => {
+  it('1 h offline matches 1 h of live ticks for the same seed, caps and hunger included', () => {
+    const start = busy(77);
+    let live = start;
+    let atWoodCap = 0;
+    let starving = 0;
+    for (let i = 0; i < 3600 / STEP; i++) {
+      live = tick(live, STEP);
+      const caps = storeCaps(live);
+      for (const k of RESOURCES) expect(live.stores[k]).toBeLessThanOrEqual(caps[k]);
+      if (live.stores.wood === caps.wood) atWoodCap++;
+      if (live.hunger > 0) starving++;
+    }
+    // The run really pressed on the cap and on hunger, and raids landed.
+    expect(atWoodCap).toBeGreaterThan(0);
+    expect(starving).toBeGreaterThan(0);
+    expect(live.chronicle.some((c) => c.kind === 'raids')).toBe(true);
+
+    const offline = catchUp(start, 3600);
+    expect(offline).toEqual(awaySummary(live, start, 3600));
+    expect(offline.chronicle.at(-1)).toMatchObject({ kind: 'away', year: live.year });
+  });
+
+  it('replays at most MAX_CATCHUP (8 h)', () => {
+    const start = createRealm(3);
+    expect(MAX_CATCHUP).toBe(8 * 60 * 60);
+    const away = catchUp(start, 30 * 24 * 3600);
+    expect(away.time).toBe(MAX_CATCHUP);
+    expect(away.chronicle.at(-1)!.text).toMatch(/^Away 8h 0m: /);
+  });
+
+  it('replays a short absence without a Chronicle line', () => {
+    const start = createRealm(3);
+    const away = catchUp(start, AWAY_SUMMARY_MIN - 1);
+    expect(away.time).toBe(AWAY_SUMMARY_MIN - 1);
+    expect(away.chronicle.filter((c) => c.kind === 'away')).toEqual([]);
+    expect(catchUp(start, AWAY_SUMMARY_MIN).chronicle.at(-1)!.kind).toBe('away');
+  });
+
+  it.each([-3600, NaN, Infinity, -Infinity, 0])('replays nothing for %s seconds away', (value) => {
+    const start = createRealm(3);
+    expect(catchUp(start, value)).toBe(start);
+  });
+
+  it('reports whole hours from a clock with float drift', () => {
+    // 1/3 + 14,400 steps of 0.25 comes out at 3599.9999999999995 s.
+    const start = { ...createRealm(3), time: 1 / 3 };
+    expect(catchUp(start, 3600).chronicle.at(-1)!.text).toMatch(/^Away 1h 0m: /);
+  });
+
+  it('keeps the Chronicle at its cap', () => {
+    const away = catchUp(busy(9), MAX_CATCHUP);
+    expect(away.chronicle).toHaveLength(CHRONICLE_MAX);
+    expect(away.chronicle.at(-1)!.kind).toBe('away');
+  });
+});
+
+describe('awaySummary', () => {
+  it('sums up time, stores, people and soldiers', () => {
+    const before = busy(1);
+    const after = {
+      ...before,
+      stores: { food: 0, wood: 250.6, iron: 15.4, gold: 145 },
+      idle: before.idle + 2,
+      soldiers: 0,
+    };
+    expect(awaySummary(after, before, 2 * 3600 + 5 * 60 + 59).chronicle.at(-1)!.text).toBe(
+      'Away 2h 5m: food -50, wood +61, iron +0, gold +55; people 10 to 11; soldiers 1 to 0.',
+    );
+  });
+
+  it('stays short, ASCII and loadable however big the numbers', () => {
+    const before = createRealm(1);
+    const huge = SAVE_LIMITS.amount;
+    const after = {
+      ...before,
+      stores: { food: huge, wood: huge, iron: huge, gold: huge },
+      idle: SAVE_LIMITS.count,
+      soldiers: SAVE_LIMITS.count,
+    };
+    const realm = awaySummary(after, before, MAX_CATCHUP);
+    const { text } = realm.chronicle.at(-1)!;
+    expect(text.length).toBeLessThanOrEqual(SAVE_LIMITS.textChars);
+    expect(text).toMatch(/^[\x20-\x7e]+$/);
+    expect(text).toContain('food +1.00e+300');
+    expect(parse(serialize(realm))).toEqual(realm);
+  });
+
+  it('round-trips through the save after a real catch-up', () => {
+    const realm = catchUp(busy(2), MAX_CATCHUP);
+    expect(parse(serialize(realm, 0))).toEqual(realm);
   });
 });

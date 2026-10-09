@@ -52,9 +52,21 @@ const NAME = /^[A-Z][a-z]+(?: [1-9][0-9]{0,8})?$/;
 /** Chronicle text: printable ASCII only, so no control, bidi, zero-width or look-alike characters. */
 const TEXT = /^[\x20-\x7e]+$/;
 
-/** The save string for `realm`. */
-export function serialize(realm: Realm): string {
-  return JSON.stringify({ version: SAVE_VERSION, realm });
+/** Latest time a Date can hold, in ms since the epoch. */
+const MAX_DATE_MS = 8.64e15;
+
+/**
+ * The save string for `realm`, stamped with `savedAt` (ms since the epoch) so
+ * the time away can be replayed on load (§14).
+ */
+export function serialize(realm: Realm, savedAt?: number): string {
+  return JSON.stringify({ version: SAVE_VERSION, savedAt, realm });
+}
+
+/** A parsed save: the realm, and when it was saved (null for a save without a stamp). */
+export interface Save {
+  realm: Realm;
+  savedAt: number | null;
 }
 
 /** Rejects the save; caught in parse(), never escapes it. */
@@ -199,11 +211,22 @@ function realm(v: unknown): Realm {
  * allow-list above, so unknown keys (including `__proto__`) are never copied.
  */
 export function parse(save: string | null): Realm | null {
+  return parseSave(save)?.realm ?? null;
+}
+
+/**
+ * Like parse(), with the save's timestamp. A save without one (written before
+ * offline progress) loads with savedAt null; one that is present must be a
+ * whole, non-negative Date value or the whole save is rejected.
+ */
+export function parseSave(save: string | null): Save | null {
   if (typeof save !== 'string' || save.length > SAVE_LIMITS.chars) return null;
   try {
     const o = obj(JSON.parse(save));
     if (own(o, 'version') !== SAVE_VERSION) return null;
-    return realm(own(o, 'realm'));
+    const stamp = own(o, 'savedAt');
+    const savedAt = stamp === undefined ? null : int(stamp, 0, MAX_DATE_MS);
+    return { realm: realm(own(o, 'realm')), savedAt };
   } catch {
     // Not JSON, or a fail() from the checks above.
     return null;
