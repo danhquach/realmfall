@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   RESOURCES,
+  conquests,
   createRealm,
   housingCap,
   PEOPLE,
@@ -10,15 +11,7 @@ import {
   type Realm,
 } from './realm.ts';
 import { createRng } from './rng.ts';
-import {
-  SIM_LIMITS,
-  STRATEGY,
-  conquests,
-  decide,
-  formatTable,
-  parseArgs,
-  simulate,
-} from './sim.ts';
+import { SIM_LIMITS, STRATEGY, decide, formatTable, parseArgs, simulate } from './sim.ts';
 
 describe('simulate', () => {
   it('plays 100 years in well under 5 s, one row per year', () => {

@@ -79,13 +79,44 @@ function withLosses(realm: Realm, lost: number): Realm {
   return { ...realm, soldiers: realm.soldiers - lost, stores: { ...realm.stores, weapons } };
 }
 
-/** Raid timing, strength range and loss (docs/design.md §7). */
+/** Raid timing, strength range, loss, grace period and early cap (docs/design.md §7). */
 export const RAID = {
   every: 45,
   minStrength: 0.4,
   maxStrength: 0.8,
   loss: 0.25,
+  /** No raid before this year. */
+  graceYear: 10,
+  /** From this year raids come with or without a finished Barracks. */
+  graceEndYear: 30,
+  /** Until the first conquest, strength is at most max(capArmy × field army power, capMin). */
+  capArmy: 1.5,
+  capMin: 10,
 } as const;
+
+/** Rivals annexed so far: each conquest adds exactly BATTLE.annexHousing housing (§7). */
+export function conquests(realm: Realm): number {
+  return realm.annexedHousing / BATTLE.annexHousing;
+}
+
+/**
+ * Whether raids can come yet (§7): never before year 10; from year 10 once a
+ * Barracks is finished (one still in the queue doesn't count); from year 30
+ * regardless, so skipping the Barracks doesn't buy peace.
+ */
+export function raidGraceOver(realm: Realm): boolean {
+  if (realm.year < RAID.graceYear) return false;
+  return realm.year >= RAID.graceEndYear || realm.buildings.barracks > 0;
+}
+
+/**
+ * The most a raid can strike with (§7): max(1.5 × field army power, 10) until
+ * the first conquest, then no cap. An empty army still loses to a capped raid.
+ */
+export function raidCap(realm: Realm): number {
+  if (conquests(realm) > 0) return Infinity;
+  return Math.max(RAID.capArmy * armyPower(realm), RAID.capMin);
+}
 
 /** The stores a raid on the capital takes from (§7). */
 const RAIDED = ['food', 'wood'] as const;
@@ -100,15 +131,17 @@ export function raidRng(seed: number, n: number): Rng {
 
 /**
  * One raid on the capital (§7): a random hostile rival attacks with strength
- * E × (0.4–0.8). If capitalDefence() ≥ strength it is repelled; otherwise the
- * realm loses 25% of the food and wood above the Storehouse's safe amount.
- * Nothing happens while no rival is hostile.
+ * E × (0.4–0.8), capped by raidCap(). If capitalDefence() ≥ strength it is
+ * repelled; otherwise the realm loses 25% of the food and wood above the
+ * Storehouse's safe amount. Nothing happens during the grace period
+ * (raidGraceOver) or while no rival is hostile.
  */
 export function raid(realm: Realm, rng: Rng): Realm {
   const hostile = realm.rivals.filter((r) => r.hostile);
-  if (hostile.length === 0) return realm;
+  if (hostile.length === 0 || !raidGraceOver(realm)) return realm;
   const rival = pick(rng, hostile);
-  const strength = rival.power * (RAID.minStrength + (RAID.maxStrength - RAID.minStrength) * rng());
+  const rolled = rival.power * (RAID.minStrength + (RAID.maxStrength - RAID.minStrength) * rng());
+  const strength = Math.min(rolled, raidCap(realm));
   // "Repel the next raid" (§9) ends with this raid, met or failed.
   const end = (next: Realm, met: boolean) =>
     realm.challenge?.kind === 'raid' ? endChallenge(next, met) : next;

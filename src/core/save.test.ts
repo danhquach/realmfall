@@ -9,6 +9,9 @@ import {
   assign,
   attack,
   cancelOrder,
+  conquests,
+  raidCap,
+  raidGraceOver,
   createRealm,
   gainTrait,
   order,
@@ -21,6 +24,7 @@ import {
   train,
   OFFER_MAX,
   TRADER,
+  YEAR_SECONDS,
   type Realm,
 } from './realm.ts';
 import { createRng } from './rng.ts';
@@ -163,6 +167,23 @@ describe('save round trip', () => {
       const next = { ...realm, challenge };
       expect(parse(serialize(next))).toEqual(next);
     }
+  });
+
+  it('keeps the raid grace period and the first conquest through a load (§7)', () => {
+    const base = createRealm(4);
+    const early = { ...base, time: 9 * YEAR_SECONDS, year: 10, soldiers: 10 };
+    const grace = { ...early, buildings: { ...early.buildings, barracks: 0 } };
+    expect(raidGraceOver(parse(serialize(grace))!)).toBe(false);
+    const ready = { ...early, buildings: { ...early.buildings, barracks: 1 } };
+    const loaded = parse(serialize(ready))!;
+    expect(raidGraceOver(loaded)).toBe(true);
+    expect(raidCap(loaded)).toBe(raidCap(ready));
+    expect(raidCap(loaded)).toBeLessThan(Infinity);
+    const won = attack(ready, 0, () => 0);
+    expect(conquests(won)).toBe(1);
+    const reloaded = parse(serialize(won))!;
+    expect(conquests(reloaded)).toBe(1);
+    expect(raidCap(reloaded)).toBe(Infinity);
   });
 
   it('writes the version', () => {

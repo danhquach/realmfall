@@ -1,5 +1,6 @@
 /** What the realm works towards: milestones, challenges, offers and the trader (docs/design.md §9). */
 import { int, pick, type Rng } from './rng.ts';
+import { raidGraceOver } from './battle.ts';
 import { atMax, built, CONSTRUCTION_INFO, type Need, queued, unmetNeeds } from './buildings.ts';
 import { chronicle } from './chronicle.ts';
 import { type Away } from './events.ts';
@@ -82,7 +83,7 @@ export function challengeText(realm: Realm): string {
   if (!c) {
     return realm.year < realm.challengeYear
       ? `None active. The next comes in year ${realm.challengeYear}.`
-      : `None active. One comes once you can store ${CHALLENGE.food} food but hold less, or a rival is hostile.`;
+      : `None active. One comes once you can store ${CHALLENGE.food} food but hold less, or a rival is hostile and raids have begun.`;
   }
   const goal = CHALLENGE_INFO[c.kind].goal;
   const food = Math.min(Math.max(Math.floor(realm.stores.food), 0), CHALLENGE.food);
@@ -183,13 +184,14 @@ export function pickOffer(realm: Realm, index: number, choice: number): Realm {
 
 /**
  * The challenges that can be offered now: food needs a food cap of 500 and
- * less than 500 in store (or it would be met at once), a raid a hostile rival.
+ * less than 500 in store (or it would be met at once), a raid a hostile rival
+ * and the raid grace period (§7) over, or no raid would come to repel.
  */
 export function possibleChallenges(realm: Realm): ChallengeKind[] {
   return CHALLENGES.filter((c) => {
     if (c === 'food')
       return storeCaps(realm).food >= CHALLENGE.food && realm.stores.food < CHALLENGE.food;
-    return realm.rivals.some((r) => r.hostile);
+    return raidGraceOver(realm) && realm.rivals.some((r) => r.hostile);
   });
 }
 
