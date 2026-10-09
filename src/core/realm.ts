@@ -787,6 +787,35 @@ export function randomEvent(realm: Realm, rng: Rng): Realm {
   return applyEvent(realm, pick(rng, possibleEvents(realm)), rng);
 }
 
+/** The events that need no decision, so they still happen while the player is away (§10). */
+export const GOOD_EVENTS = ['harvest', 'envoy', 'vein'] as const satisfies readonly RandomEvent[];
+
+/** Game seconds of time away per good event (§10 Away time). */
+export const AWAY_EVENT_EVERY = 3600;
+
+/**
+ * An absence being replayed (§10 Away time), by offline catch-up or a
+ * background tab: the game time it began and the trader's restock year then.
+ */
+export interface Away {
+  since: number;
+  traderYear: number;
+}
+
+/** The absence that begins now. */
+export function awayFrom(realm: Realm): Away {
+  return { since: realm.time, traderYear: realm.traderYear };
+}
+
+/**
+ * Whether event slot `at` fires while away: only the first slot after each
+ * full hour away does, so there is at most one good event per hour (§10).
+ */
+function awayEventDue(away: Away, at: number): boolean {
+  const hours = Math.floor((at - away.since) / AWAY_EVENT_EVERY);
+  return hours >= 1 && at - EVENT.every < away.since + hours * AWAY_EVENT_EVERY;
+}
+
 /** A trait's name with its tier, so colour is never the only cue (§9). */
 export function traitLabel(trait: Trait): string {
   const { name, tier } = TRAIT_INFO[trait];
@@ -820,9 +849,11 @@ function amount(n: number): string {
 }
 
 /**
- * Adds the Chronicle summary of `seconds` simulated away from the game (§14):
- * how stores, people and soldiers changed from `before` to `realm`. Plain
- * ASCII and well under the save's line limit, so the save always accepts it.
+ * Adds the Chronicle summary of `seconds` simulated away from the game (§10,
+ * §14): how stores, people and soldiers changed from `before` to `realm`, the
+ * good events and trader restocks written meanwhile, and that the realm was
+ * at peace. Plain ASCII and under the save's line limit, so the save always
+ * accepts it.
  */
 export function awaySummary(realm: Realm, before: Realm, seconds: number): Realm {
   const hours = Math.floor(seconds / 3600);
@@ -830,11 +861,17 @@ export function awaySummary(realm: Realm, before: Realm, seconds: number): Realm
   const signed = (n: number) => `${n >= 0 ? '+' : ''}${amount(n)}`;
   const stores = RESOURCES.map((k) => `${k} ${signed(realm.stores[k] - before.stores[k])}`);
   const change = (of: (r: Realm) => number) => `${amount(of(before))} to ${amount(of(realm))}`;
+  // Lines are shared, never copied, so the new ones are those `before` lacks.
+  const old = new Set(before.chronicle);
+  const events = realm.chronicle.filter((c) => !old.has(c) && c.kind === 'events').length;
+  // Away, the trader restocks at most once (§10).
+  const restocks = realm.traderYear === before.traderYear ? 0 : 1;
   return chronicle(
     realm,
     'away',
     `Away ${hours}h ${minutes}m: ${stores.join(', ')}; ` +
-      `people ${change(population)}; soldiers ${change((r) => r.soldiers)}.`,
+      `people ${change(population)}; soldiers ${change((r) => r.soldiers)}; ` +
+      `${events} ${events === 1 ? 'event' : 'events'}, ${restocks} trader ${restocks === 1 ? 'restock' : 'restocks'}; at peace.`,
   );
 }
 
@@ -1197,8 +1234,12 @@ export function buyTrait(realm: Realm, index: number): Realm {
  * deadline, offers a new one when none is active and its year has come, and
  * opens or restocks the trader. Every roll is on a stream keyed by the
  * milestone or the year, so the same seed always rolls the same traits.
+ *
+ * While `away` (§10 Away time), challenges wait for the player: none is
+ * offered, met or failed (the deadline moves on with the years, see step()),
+ * and the trader restocks at most once.
  */
-function traitSources(realm: Realm): Realm {
+function traitSources(realm: Realm, away: Away | null): Realm {
   let next = realm;
   MILESTONES.forEach((m, i) => {
     if (next.milestones.includes(m) || !MILESTONE_INFO[m].reached(next)) return;
@@ -1207,25 +1248,29 @@ function traitSources(realm: Realm): Realm {
     next = offer(next, 'milestone', traitRng(next.seed, 'milestone', i), why);
   });
   const active = next.challenge;
-  if (active?.kind === 'food' && next.stores.food >= CHALLENGE.food) {
-    next = endChallenge(next, true);
-  } else if (active && next.year >= active.deadline) {
-    next = endChallenge(next, false);
-  } else if (!active && next.year >= next.challengeYear) {
-    const kinds = possibleChallenges(next);
-    if (kinds.length > 0) {
-      const kind = pick(traitRng(next.seed, 'challenge', next.year), kinds);
-      const { goal, years } = CHALLENGE_INFO[kind];
-      const deadline = next.year + years;
-      next = chronicle(
-        { ...next, challenge: { kind, deadline } },
-        'traits',
-        `Challenge: ${goal} by year ${deadline}.`,
-      );
+  // Away, challenges wait for the player: neither offered, met nor failed.
+  if (!away) {
+    if (active?.kind === 'food' && next.stores.food >= CHALLENGE.food) {
+      next = endChallenge(next, true);
+    } else if (active && next.year >= active.deadline) {
+      next = endChallenge(next, false);
+    } else if (!active && next.year >= next.challengeYear) {
+      const kinds = possibleChallenges(next);
+      if (kinds.length > 0) {
+        const kind = pick(traitRng(next.seed, 'challenge', next.year), kinds);
+        const { goal, years } = CHALLENGE_INFO[kind];
+        const deadline = next.year + years;
+        next = chronicle(
+          { ...next, challenge: { kind, deadline } },
+          'traits',
+          `Challenge: ${goal} by year ${deadline}.`,
+        );
+      }
     }
   }
   const restockDue = next.traderYear === 0 || next.year >= next.traderYear + TRADER.every;
-  if (next.buildings.market > 0 && restockDue) next = restock(next);
+  const restocked = away !== null && next.traderYear !== away.traderYear;
+  if (next.buildings.market > 0 && restockDue && !restocked) next = restock(next);
   return next;
 }
 
@@ -1888,8 +1933,13 @@ function loseOne(realm: Realm): Realm {
  *
  * Construction (§5): the queue gets buildRate() × dt of work, with the builders
  * and shortfall at the start of the step.
+ *
+ * Away (§10): while `away` is set, the economy runs as above but what needs a
+ * decision waits: no raids, only good events and at most one per hour away,
+ * no challenge offers, an active challenge's deadline paused, and at most one
+ * trader restock.
  */
-export function tick(realm: Realm, dt: number): Realm {
+export function tick(realm: Realm, dt: number, away: Away | null = null): Realm {
   // An infinite step would split at raids forever; NaN would poison every store.
   if (!Number.isFinite(dt)) return realm;
   let next = realm;
@@ -1898,8 +1948,8 @@ export function tick(realm: Realm, dt: number): Realm {
   for (;;) {
     const toNext = Math.min(until(RAID.every), until(EVENT.every));
     // `!(>)` also ends on NaN; toNext ≤ 0 only at float limits, where no split can help.
-    if (!(left > toNext) || !(toNext > 0)) return step(next, left);
-    next = step(next, toNext);
+    if (!(left > toNext) || !(toNext > 0)) return step(next, left, away);
+    next = step(next, toNext, away);
     left -= toNext;
   }
 }
@@ -1910,22 +1960,33 @@ interface Happening {
   run: (realm: Realm) => Realm;
 }
 
-/** Every raid and event in (from, to], in time order; a raid before an event at the same moment. */
-function happenings(seed: number, from: number, to: number): Happening[] {
+/**
+ * Every raid and event in (from, to], in time order; a raid before an event at
+ * the same moment. While `away`, no raids and only the hourly good events (§10).
+ */
+function happenings(seed: number, from: number, to: number, away: Away | null): Happening[] {
   const list: Happening[] = [];
-  const add = (every: number, run: (n: number) => Happening['run']) => {
+  const add = (every: number, run: (n: number, at: number) => Happening['run'] | null) => {
     for (let n = Math.floor(from / every) + 1; n <= Math.floor(to / every); n++) {
-      list.push({ at: n * every, run: run(n) });
+      const happen = run(n, n * every);
+      if (happen) list.push({ at: n * every, run: happen });
     }
   };
-  add(RAID.every, (n) => (r) => raid(r, raidRng(seed, n)));
-  add(EVENT.every, (n) => (r) => randomEvent(r, eventRng(seed, n)));
+  if (!away) add(RAID.every, (n) => (r) => raid(r, raidRng(seed, n)));
+  add(EVENT.every, (n, at) => {
+    if (!away) return (r) => randomEvent(r, eventRng(seed, n));
+    if (!awayEventDue(away, at)) return null;
+    return (r) => {
+      const rng = eventRng(seed, n);
+      return applyEvent(r, pick(rng, GOOD_EVENTS), rng);
+    };
+  });
   // Array.sort is stable, so raids stay ahead of events at the same moment.
   return list.sort((a, b) => a.at - b.at);
 }
 
 /** One stretch of tick() that ends on or before the next raid or event. */
-function step(realm: Realm, dt: number): Realm {
+function step(realm: Realm, dt: number, away: Away | null): Realm {
   const r = production(realm);
   const caps = storeCaps(realm);
   const stores = { ...realm.stores };
@@ -1965,13 +2026,19 @@ function step(realm: Realm, dt: number): Realm {
 
   next = construct({ ...next, hunger, soldiers, desertion }, buildRate(realm) * dt);
   // Years, raids and events run in time order, so each meets the rivals and year of its moment.
+  // TODO(#35): unpaid tribute must not end the peace while away (§10 Away time).
   const toYear = (year: number) => {
-    while (next.year < year) next = traitSources({ ...growRivals(next), year: next.year + 1 });
+    while (next.year < year) {
+      const c = next.challenge;
+      // Away, an active challenge's deadline moves with the year, so its years left stay put (§10).
+      const challenge = away && c ? { ...c, deadline: c.deadline + 1 } : c;
+      next = traitSources({ ...growRivals(next), year: next.year + 1, challenge }, away);
+    }
   };
-  for (const h of happenings(next.seed, realm.time, next.time)) {
+  for (const h of happenings(next.seed, realm.time, next.time, away)) {
     toYear(1 + Math.floor(h.at / YEAR_SECONDS));
     next = h.run(next);
   }
   toYear(1 + Math.floor(next.time / YEAR_SECONDS));
-  return traitSources(next);
+  return traitSources(next, away);
 }

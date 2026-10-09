@@ -32,7 +32,6 @@
 }
 body {
   margin: 0;
-  padding: 24px 16px;
   background: var(--bg);
   color: var(--ink);
   font:
@@ -41,13 +40,128 @@ body {
     Menlo,
     monospace;
 }
-main {
-  max-width: 960px;
-  margin: 0 auto;
+/* One screen, no page scroll (docs/design.md §18): status bar on top, the
+   workspace fills the rest, and each panel scrolls inside itself. */
+.app {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+}
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.status-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 20px;
+  flex: 1;
+  min-width: 0;
+}
+.status-info p {
+  margin: 0;
+}
+.goals-button {
+  margin-left: auto;
+}
+.goals-button[aria-expanded='true'] {
+  background: var(--line);
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 30%);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0 16px;
+  padding: 8px 16px 16px;
+  min-height: 0;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.tab[aria-selected='true'] {
+  background: var(--ink);
+  color: var(--bg);
+}
+.tab-chronicle {
+  display: none;
+}
+.tabpanel {
+  grid-column: 1;
+  grid-row: 2;
+  overflow-y: auto;
+  min-height: 0;
+}
+.side {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.goals-pop {
+  position: fixed;
+  z-index: 1;
+  width: min(420px, calc(100vw - 32px));
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+.goals-pop .panel {
+  border-color: var(--ink);
+}
+@media (max-width: 699px) {
+  body {
+    font-size: 13px;
+  }
+  .status {
+    padding: 6px 12px;
+  }
+  .status-info {
+    gap: 2px 12px;
+  }
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    padding: 8px 0 0;
+  }
+  .tabs {
+    grid-row: 2;
+    margin: 0;
+    gap: 0;
+    border-top: 1px solid var(--line);
+  }
+  .tab {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 4px 2px;
+    border: 0;
+  }
+  .tab-chronicle {
+    display: block;
+  }
+  .tabpanel,
+  .side {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 0 12px 8px;
+  }
+  .goals-pop {
+    left: 0;
+    width: auto;
+  }
 }
 h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.1rem;
 }
 h2 {
   margin: 0 0 8px;
@@ -56,13 +170,14 @@ h2 {
   letter-spacing: 0.05em;
 }
 .subtitle {
-  margin: 4px 0 16px;
   color: var(--muted);
 }
-.panels {
+/* A tab's panels sit side by side when there is room. */
+.tabpanel {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-content: start;
 }
 .panel {
   border: 1px solid var(--line);
@@ -72,17 +187,21 @@ h2 {
   margin: 0 0 8px;
 }
 .stores {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
   margin: 0;
+}
+.stores div {
+  display: flex;
+  gap: 6px;
 }
 .stores dt {
   text-transform: capitalize;
 }
 .stores dd {
   margin: 0;
-  text-align: right;
+  white-space: nowrap;
 }
 .rate {
   color: var(--muted);
@@ -131,6 +250,7 @@ button[aria-disabled='true'] {
   border-color: var(--line);
   cursor: not-allowed;
 }
+.tabpanel:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
@@ -164,13 +284,17 @@ button:focus-visible {
   display: none;
 }
 .chronicle {
-  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .chronicle ol {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 20em;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 .chronicle li {
@@ -230,9 +354,6 @@ h3 {
 }
 .traits .owned .info {
   color: var(--muted);
-}
-.traits {
-  grid-column: 1 / -1;
 }
 .traits .rows .controls {
   flex-wrap: wrap;

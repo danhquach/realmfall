@@ -17,8 +17,10 @@ so every realm grows into something different.
    More soldiers means fewer workers, more food eaten, more gold spent.
 2. **Conquest changes you.** Beating a rival is a permanent change to how your
    kingdom plays, not just a bigger number.
-3. **The world pushes back.** Rivals grow while you idle, raid you when you're
-   weak, and compete for the same land.
+3. **The world pushes back, but never while you're away.** Rivals raid you
+   when you're weak and compete for the same land, and their strength is set
+   by their level, not by the clock (§7). Time away only makes your next
+   decision bigger, never worse (§10).
 4. **The story writes itself.** The Chronicle turns the simulation into a
    history of your realm.
 5. **Text first.** Numbers, buttons and prose. The world map is a simple graph
@@ -688,8 +690,9 @@ Slots and the level cap bound the total: at most three traits, each at most
 
 ### Goals panel
 
-The first panel, so the player always sees what to work towards. Text only;
-it adds no mechanics and updates as the realm changes.
+Opens from the Goals button at the right end of the status bar (§18), so the
+player can check what to work towards from any tab. Text only; it adds no
+mechanics and updates as the realm changes, also while open.
 
 - **Next:** the first milestone not yet reached, in table order, with its
   progress: "Next: 50 people (37 / 50)." Once every milestone is reached:
@@ -712,6 +715,38 @@ it adds no mechanics and updates as the realm changes.
   year passed.
 - There are no rulers: ageing and succession are parked as a possible upgrade
   (§17).
+
+### Away time
+
+The economy idles, strategy waits. While you're away the realm only grows;
+nothing that needs a decision happens.
+
+- **Away** covers offline catch-up (§14) and a background tab coming back,
+  for any absence of a minute or more. Live play is unchanged, and an absence
+  under a minute (a reload) is replayed exactly as live play.
+- **Replayed in full:** the economy, store caps, growth, hunger, construction
+  and training, in the same 0.25 s steps as live play. Rivals grow and refill
+  as usual, and stop at their level's ceiling (#78).
+- **Waits for the player** (skipped, not saved up):
+  - raids;
+  - Plague and Change of heart;
+  - challenge offers; an active challenge's deadline pauses, so it has the
+    same years left when you return, and it is neither met nor failed until
+    then;
+  - trader restocks after the first one;
+  - unpaid tribute doesn't end the peace (#35).
+- **Good events** (Bountiful harvest, Envoy's gifts, Rich vein) still happen,
+  at most one per hour away: the first event slot after each full hour.
+- What waited picks up once you're back: a challenge that is due is offered,
+  a met one pays out, and the trader restocks if it is due.
+- The "Away" Chronicle line sums up the absence: time away, the change in
+  each store, people and soldiers, the good events and trader restocks, and
+  that the realm was at peace.
+- Catch-up deliberately no longer matches live play exactly; it matches the
+  economy, construction and training of a live run on the same schedule.
+
+The test for every new system: does being away make the player's next
+decision worse? If yes, it waits for the player.
 
 ## 11. Events
 
@@ -753,8 +788,9 @@ lines stay in the Chronicle and count toward its 200-line cap.
 1. **Tribute is too cheap.** A one-time 30 gold buys peace until a random
    event flips it. Tribute should be ongoing (gold per year).
 2. **Too few traits.** Six traits repeat within a few conquests.
-3. **Time runs too fast.** An 8 s year is good for testing, too fast for an
-   idle game.
+3. **Year length is unsettled.** An 8 s year is good for testing. The final
+   length is picked in #38; nothing should depend on reaching a goal by a
+   real-time deadline.
 4. **No offline progress.** Idle games need it; see §14.
 5. **No late-game sink.** Gold and food pile up once the economy is stable.
    Trait trader prices and swap costs (§9) soak up some gold, but not food.
@@ -812,10 +848,11 @@ Ordered by how much they add to the endless loop:
    each player action and when the page is hidden. The save is versioned; a
    save that is missing, of another version or fails validation starts a new
    game. On return, simulate the time away (capped, e.g. 8 h) in the same fixed
-   0.25 s steps as live play, so store caps, growth and hunger behave exactly
-   as they would online, and write a Chronicle summary: time away, the change
-   in each store, people and soldiers. Absences under a minute (a reload) are
-   replayed without a line. Construction and training (§5, §6) advance in the
+   0.25 s steps as live play, so the economy behaves exactly as it would
+   online; the systems that wait for the player are listed in §10 Away time.
+   Write a Chronicle summary: time away, the change in each store, people and
+   soldiers. Absences under a minute (a reload) are replayed exactly as live
+   play, without a line. Construction and training (§5, §6) advance in the
    same steps, and the summary lists the buildings finished and units trained
    while away.
 2. **Bigger trait pool and trait synergies.** More traits per tier, and some
@@ -865,3 +902,28 @@ The prototype's prestige reset:
   until this ships.
 - Known issue: +10% production per heir isn't worth losing half your stores.
   It needs heir traits, dynasty perks (#37), or a choice of heir.
+
+## 18. Screen layout
+
+The whole game fits in one screen with no page scroll. A panel whose content
+outgrows its area scrolls inside itself. Layout only: no mechanics, and each
+panel's text is the same wherever it sits.
+
+- **Status bar** across the top: the realm's name, the year, every store with
+  its cap and rate, and population with idle peasants. It is on screen on every
+  tab and while Goals is open. The **Goals** button sits at its right end.
+- **Goals dropdown:** starts closed, also after a reload. The button opens it
+  right under itself, right-aligned, over the Chronicle and the right edge of
+  the tabs; opening or closing it never changes the tab or scrolls anything.
+  The button, Esc or a click outside closes it. Content taller than the screen
+  scrolls inside it.
+- **Workspace:** four tabs, **Build** (People's job controls and Buildings
+  with the queue), **Army**, **Rivals** and **Traits**, one shown at a time.
+  Arrow keys, Home and End move between tabs. The last tab used is remembered
+  across reloads; a missing, blocked or unknown stored value opens Build.
+- **Chronicle** in a right-hand column, newest line at the top, scrolling
+  inside its own panel.
+- **Phone width** (under 700 px): the status bar stays on top, the tabs become
+  a bottom bar and the Chronicle becomes a fifth tab. Goals opens full width
+  right under the status bar. If the Chronicle tab was last used on a phone,
+  a wide screen shows Build beside the Chronicle column.
