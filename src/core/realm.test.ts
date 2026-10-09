@@ -26,6 +26,7 @@ import {
   raid,
   raidRng,
   canAfford,
+  CHRONICLE_MAX,
   createRealm,
   createRival,
   growRivals,
@@ -48,6 +49,7 @@ import {
   storehouseLevel,
   swapCost,
   tick,
+  traitLabel,
   traitModifiers,
   traitUpgradeCost,
   train,
@@ -1860,5 +1862,120 @@ describe('events (design §11)', () => {
     expect(eventRng(42, 1)()).not.toBe(eventRng(42, 2)());
     expect(eventRng(42, 1)()).not.toBe(eventRng(43, 1)());
     expect(eventRng(42, 1)()).not.toBe(raidRng(42, 1)());
+  });
+});
+
+describe('Chronicle (design §12)', () => {
+  const WIN = () => 0;
+  const LOSE = () => 0.999999;
+  const lines = (r: Realm) => r.chronicle.map((c) => c.text);
+  /** Rival 0 at `power` and at peace, the realm with `soldiers` and gold to spend. */
+  const armed = (soldiers: number, power: number): Realm => {
+    const realm = createRealm(11);
+    return {
+      ...realm,
+      year: 3,
+      soldiers,
+      stores: { ...realm.stores, wood: 150, iron: 20, gold: 100 },
+      rivals: realm.rivals.map((r, i) => (i === 0 ? { ...r, power, hostile: false } : r)),
+    };
+  };
+
+  it('tags each line with the year it happened', () => {
+    const next = build(armed(0, 20), 'hut');
+    expect(next.chronicle).toEqual([{ year: 3, text: 'Built a hut.' }]);
+  });
+
+  it('writes buildings raised and Storehouse upgrades', () => {
+    let realm = armed(0, 20);
+    for (const b of ['hut', 'market', 'forge'] as const) realm = build(realm, b);
+    realm = upgradeStorehouse({ ...realm, stores: { ...realm.stores, wood: 100 } });
+    expect(lines(realm)).toEqual([
+      'Built a hut.',
+      'Built a market.',
+      'Built a forge.',
+      'Raised the Storehouse to level 1.',
+    ]);
+  });
+
+  it('writes scouting reports and tribute', () => {
+    const realm = armed(0, 20.4);
+    const name = realm.rivals[0]!.name;
+    const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
+    expect(lines(scout(realm, 0))).toEqual([
+      `Scouted ${name}: power 20, ${traitLabel(realm.rivals[0]!.trait)}.`,
+    ]);
+    expect(lines(tribute(hostile, 0))).toEqual([
+      `Paid 30 gold of tribute to ${name}; now at peace.`,
+    ]);
+  });
+
+  it('writes a won battle, the new rival and the trait gained', () => {
+    const realm = armed(10, 10);
+    const next = attack(realm, 0, WIN);
+    const fresh = next.rivals.at(-1)!.name;
+    expect(lines(next)).toEqual([
+      `Conquered ${realm.rivals[0]!.name}: 2 soldiers fell; ${fresh} appears beyond it.`,
+      `Gained the trait ${traitLabel(realm.rivals[0]!.trait)}.`,
+    ]);
+    expect(next.chronicle.every((c) => c.year === 3)).toBe(true);
+  });
+
+  it('writes a lost battle, with "soldier" for one', () => {
+    const name = armed(1, 100).rivals[0]!.name;
+    expect(lines(attack(armed(7, 100), 0, LOSE))).toEqual([
+      `Lost a battle against ${name}: 4 soldiers fell.`,
+    ]);
+    expect(lines(attack(armed(1, 100), 0, LOSE))).toEqual([
+      `Lost a battle against ${name}: 1 soldier fell.`,
+    ]);
+  });
+
+  it('writes raids and events during tick, each in the year it landed', () => {
+    const realm = createRealm(5);
+    const hostile = { ...realm, rivals: realm.rivals.map((r) => ({ ...r, hostile: true })) };
+    const next = tick(hostile, RAID.every);
+    const yearAt = (t: number) => 1 + Math.floor(t / YEAR_SECONDS);
+    // The event at 25 s comes first, then the raid at 45 s, each in its own year.
+    expect(next.chronicle).toHaveLength(2);
+    expect(next.chronicle[0]!.year).toBe(yearAt(EVENT.every));
+    expect(next.chronicle[0]!.text).not.toMatch(/raided|Repelled a raid/);
+    expect(next.chronicle[1]!.year).toBe(yearAt(RAID.every));
+    expect(next.chronicle[1]!.text).toMatch(/raided|Repelled a raid/);
+  });
+
+  it('writes nothing when an action does nothing', () => {
+    const broke = { ...armed(0, 20), stores: { food: 0, wood: 0, iron: 0, gold: 0 } };
+    for (const r of [
+      build(broke, 'hut'),
+      upgradeStorehouse(broke),
+      scout(broke, 0),
+      tribute(broke, 0),
+      attack(broke, 0, WIN),
+    ]) {
+      expect(r.chronicle).toEqual([]);
+    }
+  });
+
+  it(`keeps the latest ${CHRONICLE_MAX}, dropping the oldest`, () => {
+    const old = Array.from({ length: CHRONICLE_MAX }, (_, i) => ({ year: 1, text: `old ${i}` }));
+    const next = build({ ...armed(0, 20), chronicle: old }, 'hut');
+    expect(next.chronicle).toHaveLength(CHRONICLE_MAX);
+    expect(next.chronicle[0]!.text).toBe('old 1');
+    expect(next.chronicle.at(-1)).toEqual({ year: 3, text: 'Built a hut.' });
+    expect(old).toHaveLength(CHRONICLE_MAX);
+  });
+
+  it(`trims a longer Chronicle to ${CHRONICLE_MAX} on the next line`, () => {
+    const old = Array.from({ length: 250 }, (_, i) => ({ year: 1, text: `old ${i}` }));
+    const next = build({ ...armed(0, 20), chronicle: old }, 'hut');
+    expect(next.chronicle).toHaveLength(CHRONICLE_MAX);
+    expect(next.chronicle[0]!.text).toBe('old 51');
+  });
+
+  it(`stays at ${CHRONICLE_MAX} over a long run`, () => {
+    const next = tick(atPeace(createRealm(3)), EVENT.every * 300);
+    expect(next.chronicle).toHaveLength(CHRONICLE_MAX);
+    expect(next.chronicle.at(-1)!.year).toBe(next.year);
   });
 });
