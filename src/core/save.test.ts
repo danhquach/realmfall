@@ -1,0 +1,320 @@
+import { describe, expect, it } from 'vitest';
+import { advance } from './loop.ts';
+import {
+  CHRONICLE_MAX,
+  RIVAL,
+  assign,
+  attack,
+  build,
+  createRealm,
+  gainTrait,
+  scout,
+  slotTrait,
+  tick,
+  train,
+  type Realm,
+} from './realm.ts';
+import { createRng } from './rng.ts';
+import { SAVE_LIMITS, SAVE_VERSION, parse, serialize } from './save.ts';
+
+/** A realm some way into a run: jobs, buildings, soldiers, traits, battles and a Chronicle. */
+function played(): Realm {
+  let realm = createRealm(12345);
+  realm = { ...realm, stores: { food: 200, wood: 200, iron: 50, gold: 150 } };
+  realm = assign(realm, 'miner', 2);
+  realm = build(realm, 'hut');
+  realm = train(realm, 2);
+  realm = scout(realm, 0);
+  realm = gainTrait(gainTrait(realm, 'timberClans'), 'timberClans');
+  realm = slotTrait(realm, 1, 'timberClans');
+  realm = attack(realm, 0, createRng(7));
+  return advance(realm, 600).realm;
+}
+
+/** The save of `realm` as a plain object to corrupt. */
+function saved(realm = played()): { version: unknown; realm: Record<string, unknown> } {
+  return JSON.parse(serialize(realm));
+}
+
+/** Sets `value` at `path` in a fresh save of played() and returns the string. */
+function corrupt(path: (string | number)[], value: unknown): string {
+  const save = saved();
+  let at: Record<string | number, unknown> = save.realm;
+  for (const k of path.slice(0, -1)) at = at[k] as Record<string | number, unknown>;
+  at[path.at(-1)!] = value;
+  return JSON.stringify(save);
+}
+
+/** Removes the key at `path` from a fresh save of played(). */
+function without(path: (string | number)[]): string {
+  const save = saved();
+  let at: Record<string | number, unknown> = save.realm;
+  for (const k of path.slice(0, -1)) at = at[k] as Record<string | number, unknown>;
+  delete at[path.at(-1)!];
+  return JSON.stringify(save);
+}
+
+describe('save round trip', () => {
+  it('restores a played realm exactly', () => {
+    const realm = played();
+    expect(realm.chronicle.length).toBeGreaterThan(3);
+    expect(realm.slots).toContain('timberClans');
+    expect(parse(serialize(realm))).toEqual(realm);
+  });
+
+  it('restores a new realm exactly', () => {
+    const realm = createRealm(0xffffffff);
+    expect(parse(serialize(realm))).toEqual(realm);
+  });
+
+  it('plays on from a load exactly as without one', () => {
+    const realm = played();
+    const loaded = parse(serialize(realm))!;
+    expect(advance(loaded, 3600).realm).toEqual(advance(realm, 3600).realm);
+  });
+
+  it('restores a realm with a full Chronicle', () => {
+    const realm = advance(played(), 8 * 60 * 60).realm;
+    expect(realm.chronicle).toHaveLength(CHRONICLE_MAX);
+    expect(parse(serialize(realm))).toEqual(realm);
+  });
+
+  it('writes the version', () => {
+    expect(saved().version).toBe(SAVE_VERSION);
+  });
+});
+
+describe('parse rejects bad saves', () => {
+  it.each([
+    ['no save', null],
+    ['empty', ''],
+    ['not JSON', '{realm:'],
+    ['JSON null', 'null'],
+    ['a number', '42'],
+    ['an array', '[]'],
+    ['a string', '"save"'],
+    ['no realm', JSON.stringify({ version: SAVE_VERSION })],
+    ['null realm', JSON.stringify({ version: SAVE_VERSION, realm: null })],
+    ['array realm', JSON.stringify({ version: SAVE_VERSION, realm: [] })],
+    ['no version', JSON.stringify({ realm: saved().realm })],
+    ['a newer version', JSON.stringify({ version: SAVE_VERSION + 1, realm: saved().realm })],
+    ['a string version', JSON.stringify({ version: String(SAVE_VERSION), realm: saved().realm })],
+    ['deep nesting', '['.repeat(100_000) + ']'.repeat(100_000)],
+  ])('%s', (_, save) => {
+    expect(parse(save)).toBeNull();
+  });
+
+  it('rejects a store that JSON reads as Infinity', () => {
+    const save = corrupt(['stores', 'food'], 12345.5).replace('12345.5', '1e999');
+    expect(JSON.parse(save).realm.stores.food).toBe(Infinity);
+    expect(parse(save)).toBeNull();
+  });
+
+  it('rejects an oversized save before parsing it', () => {
+    const save = serialize(played());
+    const padded = save.slice(0, -1) + ',"pad":"' + 'x'.repeat(SAVE_LIMITS.chars) + '"}';
+    expect(JSON.parse(padded).pad).toBeDefined();
+    expect(parse(padded)).toBeNull();
+    expect(parse('9'.repeat(10_000_000))).toBeNull();
+  });
+
+  it.each([
+    'seed',
+    'name',
+    'time',
+    'year',
+    'stores',
+    'idle',
+    'jobs',
+    'growth',
+    'hunger',
+    'soldiers',
+    'desertion',
+    'buildings',
+    'storehouse',
+    'annexedHousing',
+    'rivals',
+    'traits',
+    'slots',
+    'slotReadyYear',
+    'chronicle',
+  ])('a missing %s', (key) => {
+    expect(parse(without([key]))).toBeNull();
+  });
+
+  it.each([
+    ['seed', -1],
+    ['seed', 2 ** 32],
+    ['seed', 1.5],
+    ['seed', '1'],
+    ['name', ''],
+    ['name', 'hearthmoor'],
+    ['name', 'Hearth‮moor'], // bidi override
+    ['name', 'Hearth​moor'], // zero-width space
+    ['name', 'Неarthmoor'], // Cyrillic look-alike
+    ['name', '<img src=x onerror=alert(1)>'],
+    ['name', 'A' + 'a'.repeat(SAVE_LIMITS.nameChars)],
+    ['name', 42],
+    ['time', -1],
+    ['time', null],
+    ['time', SAVE_LIMITS.time + 1],
+    ['time', '600'],
+    ['year', 1e9], // doesn't match the clock: would loop catching up years
+    ['year', 0],
+    ['stores', null],
+    ['stores', [1, 2, 3, 4]],
+    [['stores', 'food'], -1],
+    [['stores', 'gold'], '100'],
+    [['stores', 'iron'], true],
+    ['idle', -1],
+    ['idle', 0.5],
+    ['idle', SAVE_LIMITS.count * 10],
+    [['jobs', 'farmer'], -2],
+    [['jobs', 'miner'], null],
+    ['growth', -0.1],
+    ['hunger', 'lots'],
+    ['soldiers', 1.25],
+    ['desertion', -1],
+    [['buildings', 'hut'], 2.5],
+    ['storehouse', SAVE_LIMITS.storehouse + 1],
+    ['storehouse', -1],
+    ['annexedHousing', -10],
+    ['rivals', []],
+    ['rivals', {}],
+    ['rivals', Array(SAVE_LIMITS.rivals + 1).fill(null)],
+    [['rivals', 0], null],
+    [['rivals', 0, 'name'], 'Fen‮mere'],
+    [['rivals', 0, 'name'], 'Fenmere 0'],
+    [['rivals', 0, 'ring'], 0],
+    [['rivals', 0, 'trait'], 'dragonBlood'],
+    [['rivals', 0, 'trait'], 'toString'],
+    [['rivals', 0, 'power'], -5],
+    [['rivals', 0, 'hostile'], 'true'],
+    [['rivals', 0, 'scouted'], 1],
+    ['traits', null],
+    ['traits', []],
+    [['traits', 'timberClans'], null],
+    [['traits', 'timberClans', 'level'], 0],
+    [['traits', 'timberClans', 'level'], 6],
+    [['traits', 'timberClans', 'duplicates'], -1],
+    ['slots', [null, null]],
+    ['slots', [null, null, null, null]],
+    ['slots', [null, 'goldenAge', null]], // not owned
+    ['slots', ['timberClans', 'timberClans', null]], // slotted twice
+    ['slots', [null, '__proto__', null]],
+    ['slotReadyYear', [1, 1]],
+    ['slotReadyYear', [1, 0, 1]],
+    ['chronicle', {}],
+    ['chronicle', Array(CHRONICLE_MAX + 1).fill({ year: 1, kind: 'events', text: 'x' })],
+    [['chronicle', 0, 'year'], 1e6], // after the current year
+    [['chronicle', 0, 'kind'], 'secrets'],
+    [['chronicle', 0, 'text'], ''],
+    [['chronicle', 0, 'text'], 'x'.repeat(SAVE_LIMITS.textChars + 1)],
+    [['chronicle', 0, 'text'], 'Raided‮ by Fenmere.'],
+    [['chronicle', 0, 'text'], 'line\nbreak'],
+    [['chronicle', 0, 'text'], '<script>alert(1)</script>\u0000'],
+  ])('%j set to %j', (path, value) => {
+    expect(parse(corrupt(Array.isArray(path) ? path : [path], value))).toBeNull();
+  });
+});
+
+describe('parse against prototype pollution', () => {
+  it('does not copy __proto__, constructor or unknown keys', () => {
+    const realm = played();
+    const save = serialize(realm).replace(
+      '"realm":{',
+      '"realm":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}},"extra":1,',
+    );
+    const traits = save.replace(
+      '"traits":{',
+      '"traits":{"__proto__":{"level":5,"duplicates":0},"polluted":{"level":1,"duplicates":0},',
+    );
+    const loaded = parse(traits)!;
+    expect(loaded).toEqual(realm);
+    expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(loaded.traits)).toBe(Object.prototype);
+    expect(Object.keys(loaded)).not.toContain('extra');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('ignores fields inherited from a polluted Object.prototype', () => {
+    const save = without(['soldiers']);
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.soldiers = 5;
+    try {
+      expect(parse(save)).toBeNull();
+    } finally {
+      delete proto.soldiers;
+    }
+  });
+});
+
+describe('a loaded realm runs', () => {
+  /** Ticks played() loaded with `fields` and returns the change in population and soldiers. */
+  function tickLoaded(fields: Record<string, unknown>) {
+    const save = saved();
+    Object.assign(save.realm, fields);
+    const realm = parse(JSON.stringify(save))!;
+    expect(realm).not.toBeNull();
+    const start = performance.now();
+    const next = tick(realm, 0.25);
+    expect(performance.now() - start).toBeLessThan(1000);
+    return { idle: next.idle - realm.idle, soldiers: next.soldiers - realm.soldiers };
+  }
+
+  it('works off a starving backlog at the limit quickly', () => {
+    const fed = { food: 0, wood: 0, iron: 0, gold: 0 };
+    const { idle } = tickLoaded({
+      stores: fed,
+      idle: SAVE_LIMITS.count,
+      hunger: SAVE_LIMITS.backlog,
+    });
+    expect(-idle).toBeLessThanOrEqual(SAVE_LIMITS.backlog / 4 + 1);
+  });
+
+  it('works off a growth backlog at the limit quickly', () => {
+    const buildings = { hut: SAVE_LIMITS.count, market: 0, forge: 0 };
+    const { idle } = tickLoaded({ buildings, growth: SAVE_LIMITS.backlog });
+    expect(idle).toBeLessThanOrEqual(SAVE_LIMITS.backlog / 4 + 1);
+  });
+
+  it('works off a desertion backlog at the limit quickly', () => {
+    const broke = { food: 200, wood: 0, iron: 0, gold: 0 };
+    const fields = { stores: broke, soldiers: SAVE_LIMITS.count, desertion: SAVE_LIMITS.backlog };
+    const { soldiers } = tickLoaded(fields);
+    expect(-soldiers).toBeLessThanOrEqual(SAVE_LIMITS.backlog / 2 + 1);
+  });
+
+  it('ticks a realm at the clock and Storehouse limits', () => {
+    const year = 1 + Math.floor(SAVE_LIMITS.time / 8);
+    tickLoaded({ time: SAVE_LIMITS.time, year, storehouse: SAVE_LIMITS.storehouse });
+  });
+
+  it.each(['growth', 'hunger', 'desertion'])('rejects a %s backlog past the limit', (key) => {
+    expect(parse(corrupt([key], SAVE_LIMITS.backlog + 1))).toBeNull();
+    expect(parse(corrupt([key], 1e9))).toBeNull();
+  });
+});
+
+describe('late game', () => {
+  it('holds rival power at the cap through battles', () => {
+    let realm = played();
+    const top = { ...realm.rivals[0]!, power: RIVAL.maxPower };
+    realm = { ...realm, soldiers: 1, rivals: [top, ...realm.rivals.slice(1)] };
+    const lost = attack(realm, 0, () => 0.99);
+    expect(lost.rivals[0]!.power).toBe(RIVAL.maxPower);
+    const strong = { ...realm, soldiers: 1e9, rivals: [{ ...top, power: 1e9 }, top] };
+    const won = attack(strong, 0, () => 0);
+    expect(won.rivals.at(-1)!.power).toBe(RIVAL.maxPower);
+  });
+
+  it('holds rival power at the cap, so a very old realm still saves', () => {
+    const save = saved();
+    const rivals = (save.realm.rivals as object[]).map((r) => ({ ...r, power: 1e299 }));
+    Object.assign(save.realm, { time: 25_000 * 8, year: 25_001, rivals });
+    const old = parse(JSON.stringify(save))!;
+    const later = advance(old, 8 * 60 * 60).realm;
+    expect(later.rivals.every((r) => r.power === RIVAL.maxPower)).toBe(true);
+    expect(parse(serialize(later))).toEqual(later);
+  });
+});

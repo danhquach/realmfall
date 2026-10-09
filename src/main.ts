@@ -3,12 +3,15 @@ import { createRealm, type Realm } from './core/realm.ts';
 import { createRng } from './core/rng.ts';
 import { mountChronicle } from './ui/chronicle.ts';
 import { mountRealmPanels } from './ui/realmPanels.ts';
+import { loadRealm, saveRealm, startAutosave } from './storage/autosave.ts';
 
 const root = document.getElementById('app');
 if (!root) throw new Error('#app missing');
 
-// The run seed comes from the platform's random source; Math.random is banned.
-let realm = createRealm(crypto.getRandomValues(new Uint32Array(1))[0]!);
+// A saved realm resumes exactly; with none, or a bad one, a new run starts.
+// Its seed comes from the platform's random source; Math.random is banned.
+// TODO(#22 Offline progress): simulate the time away since the save here.
+let realm = loadRealm() ?? createRealm(crypto.getRandomValues(new Uint32Array(1))[0]!);
 // Battles the player starts roll on their own stream, seeded the same way.
 const battleRng = createRng(crypto.getRandomValues(new Uint32Array(1))[0]!);
 
@@ -27,6 +30,8 @@ const renderPanels = mountRealmPanels(
   root,
   (change) => {
     realm = change(realm);
+    // Save each action at once, so a reload can't undo a lost battle.
+    saveRealm(realm);
     render(realm);
   },
   battleRng,
@@ -51,5 +56,6 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 
+startAutosave(() => realm);
 render(realm);
 requestAnimationFrame(frame);
