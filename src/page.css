@@ -75,6 +75,13 @@ h2 {
 .rate.negative {
   color: var(--negative);
 }
+.note,
+.report {
+  color: var(--muted);
+}
+.label.negative {
+  color: var(--negative);
+}
 .rows {
   list-style: none;
   margin: 0;
@@ -112,4 +119,32 @@ button[aria-disabled='true'] {
 button:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
+}
+.rivals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rivals li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.rivals li:first-child {
+  border-top: 0;
+}
+.rivals .label,
+.rivals .info {
+  flex-basis: 100%;
+}
+.rivals .controls {
+  flex-wrap: wrap;
+}
+.panel .report {
+  margin: 8px 0 0;
+}
+.report:empty {
+  display: none;
 }
