@@ -44,7 +44,8 @@ body {
    workspace fills the rest, and each panel scrolls inside itself. */
 .app {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* Status bar, notices (no height while empty), workspace. */
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
 }
@@ -66,8 +67,34 @@ body {
 .status-info p {
   margin: 0;
 }
-.goals-button {
+.status-tools {
+  display: flex;
+  gap: 8px;
   margin-left: auto;
+}
+/* A notice under the status bar: a new game to confirm, or a fallen realm (§4). */
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--ink);
+}
+.notice p {
+  margin: 0;
+  flex: 1 1 16em;
+}
+.notice.fallen {
+  border-color: var(--negative);
+}
+.notice.fallen strong {
+  color: var(--negative);
+}
+/* A fallen realm's action panels are locked (inert) and dimmed. */
+[inert] {
+  opacity: 0.6;
 }
 .goals-button[aria-expanded='true'] {
   background: var(--line);
@@ -126,6 +153,14 @@ body {
   }
   .status-info {
     gap: 2px 12px;
+  }
+  .notice {
+    margin: 6px 12px 0;
+  }
+  /* Stacked, so the status lines keep their width. */
+  .status-tools {
+    flex-direction: column;
+    align-items: stretch;
   }
   .workspace {
     grid-template-columns: minmax(0, 1fr);

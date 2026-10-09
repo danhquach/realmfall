@@ -1701,14 +1701,17 @@ describe('Huts, Markets and Forges levels (design §5)', () => {
 });
 
 describe('Forge weapons (design §5, §6)', () => {
-  /** Quiet realm: no workers or soldiers to disturb stores, room for iron and weapons. */
+  /**
+   * Quiet realm: no workers or soldiers to disturb stores, room for iron and
+   * weapons. One idle peasant keeps it from falling (§4); idle peasants only eat.
+   */
   const smithy = (forge: number, iron: number, weapons = 0): Realm => {
     const realm = atPeace(createRealm(1));
     return {
       ...realm,
       time: 0,
       storehouse: 2,
-      idle: 0,
+      idle: 1,
       jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 },
       buildings: { ...realm.buildings, barracks: 1, forge },
       stores: { food: 1000, wood: 0, iron, gold: 0, weapons },
@@ -1932,7 +1935,7 @@ describe('Forge weapons (design §5, §6)', () => {
     });
 
     it('when starvation takes a soldier', () => {
-      const realm = { ...smithy(0, 0, 5), soldiers: 2 };
+      const realm = { ...smithy(0, 0, 5), idle: 0, soldiers: 2 };
       const next = loseOne(realm);
       expect(next.soldiers).toBe(1);
       expect(next.stores.weapons).toBe(5);
@@ -2900,18 +2903,21 @@ describe('raids (design §7)', () => {
   });
 
   it('tick raids once every 45 s of game time, rolled on raidRng(seed, n)', () => {
-    // No one works, so only raids and events (§11) move the stores.
+    // Only farmers work, so only raids and events (§11) move the other stores.
     // Seed 1's events leave rival 0 hostile through both raids. No challenge is
     // due, so a big step and small ones write the same lines.
     const realm = { ...target(0, 100, 5, 300, 1), seed: 1, challengeYear: 1000 };
-    const frozen = { ...realm, idle: 0, jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 } };
+    // A full house of farmers: the realm can't fall (§4), grows only back after a
+    // Plague, and no one touches wood.
+    const full = { farmer: housingCap(realm), woodcutter: 0, miner: 0, builder: 0 };
+    const frozen = { ...realm, idle: 0, jobs: full };
     const raids = (r: Realm) => r.chronicle.filter((c) => /raided|Repelled a raid/.test(c.text));
     expect(raids(tick(frozen, RAID.every - 0.25))).toHaveLength(0);
     let stepped = frozen;
     for (let t = 0; t < RAID.every * 2; t += 0.25) stepped = tick(stepped, 0.25);
     expect(raids(stepped)).toHaveLength(2);
-    // One big step runs the same two raids as many small ones. (The harvest at 25 s
-    // lets peasants grow, which a big step counts coarsely, so food can drift.)
+    // One big step runs the same two raids as many small ones. (Regrowth after a
+    // Plague is counted coarsely by a big step, so food can drift.)
     const big = tick(frozen, RAID.every * 2);
     const other = (r: Realm) => r.chronicle.filter((c) => !/raided|Repelled a raid/.test(c.text));
     expect(other(big)).toEqual(other(stepped));
@@ -3370,6 +3376,12 @@ describe('Chronicle (design §12)', () => {
       'goldenAge',
     );
     const slotted = slotTrait(traited, 0, 'fertileValleys');
+    const nobody = {
+      ...base,
+      idle: 0,
+      jobs: { farmer: 0, woodcutter: 0, miner: 0, builder: 0 },
+      soldiers: 0,
+    };
     const cases: [Realm, Realm, string[]][] = [
       [order(base, 'hut'), base, ['buildings']],
       [order(base, 'storehouse'), base, ['buildings']],
@@ -3393,6 +3405,7 @@ describe('Chronicle (design §12)', () => {
       [sellDuplicate(slotted, 'fertileValleys'), slotted, ['traits']],
       [slotTrait(slotted, 0, 'goldenAge'), slotted, ['traits']],
       [awaySummary(base, base, 3600), base, ['away']],
+      [tick(nobody, 0.25), nobody, ['realm']],
     ];
     for (const [after, before, expected] of cases) expect(kinds(after, before)).toEqual(expected);
     const seen = new Set(cases.flatMap(([a, b]) => kinds(a, b)));

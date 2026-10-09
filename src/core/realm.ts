@@ -10,6 +10,7 @@ export * from './stores.ts';
 export * from './buildings.ts';
 export * from './army.ts';
 export * from './people.ts';
+export * from './fallen.ts';
 
 import { pick } from './rng.ts';
 import { FORGE, forged } from './army.ts';
@@ -24,6 +25,7 @@ import {
   GOOD_EVENTS,
   randomEvent,
 } from './events.ts';
+import { isFallen, markFallen } from './fallen.ts';
 import { CHALLENGE, traitSources } from './goals.ts';
 import { type Realm, RESOURCES, YEAR_SECONDS } from './model.ts';
 import { loseOne, PEOPLE, population, production, shortfall, workers } from './people.ts';
@@ -110,12 +112,17 @@ export function createRealm(seed: number): Realm {
  * Construction (§5): the queue gets buildRate() × dt of work, with the builders
  * and shortfall at the start of the step.
  *
+ * Fallen (§4): once no one is left, the step ends there, the Chronicle gets
+ * one "has fallen" line, and every later tick returns the realm unchanged.
+ *
  * Away (§10): while `away` is set, the economy runs as above but what needs a
  * decision waits: no raids, only good events and at most one per hour away,
  * no challenge offers, an active challenge's deadline paused, and at most one
  * trader restock.
  */
 export function tick(realm: Realm, dt: number, away: Away | null = null): Realm {
+  // A fallen realm stands still: no clock, growth, raids or events (§4 Fallen realm).
+  if (isFallen(realm)) return markFallen(realm);
   // An infinite step would split at raids forever; NaN would poison every store.
   if (!Number.isFinite(dt)) return realm;
   let next = realm;
@@ -124,8 +131,10 @@ export function tick(realm: Realm, dt: number, away: Away | null = null): Realm 
   for (;;) {
     const toNext = Math.min(until(RAID.every), until(EVENT.every));
     // `!(>)` also ends on NaN; toNext ≤ 0 only at float limits, where no split can help.
-    if (!(left > toNext) || !(toNext > 0)) return step(next, left, away);
+    if (!(left > toNext) || !(toNext > 0)) return markFallen(step(next, left, away));
     next = step(next, toNext, away);
+    // The step the last person left in is the realm's last: the rest of `dt` is dropped.
+    if (isFallen(next)) return markFallen(next);
     left -= toNext;
   }
 }

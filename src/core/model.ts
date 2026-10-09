@@ -155,6 +155,7 @@ export const CHRONICLE_KINDS = [
   'buildings',
   'traits',
   'away',
+  'realm',
 ] as const;
 
 export type ChronicleKind = (typeof CHRONICLE_KINDS)[number];

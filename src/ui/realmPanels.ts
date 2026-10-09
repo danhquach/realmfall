@@ -235,8 +235,14 @@ export function mountRealmPanels(layout: Layout, act: Act, battleRng: Rng): (rea
   layout.tabs.rivals.append(rivals);
   const renderTraits = mountTraitPanel(layout.tabs.traits, act);
   const renderGoals = mountGoalsPanel(layout.goals);
+  // The run on show; a new game (another seed) clears the last run's rival report.
+  let run: number | null = null;
 
   return (realm) => {
+    if (realm.seed !== run) {
+      run = realm.seed;
+      setText(report, '');
+    }
     renderTraits(realm);
     renderGoals(realm);
     setText(title, realm.name);

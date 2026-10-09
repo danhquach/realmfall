@@ -1,25 +1,24 @@
-import { catchUp, parseSpeed, play } from './core/loop.ts';
-import { createRealm, type Realm } from './core/realm.ts';
+import { parseSpeed } from './core/loop.ts';
+import { type Realm } from './core/realm.ts';
 import { createRng } from './core/rng.ts';
 import { mountChronicle } from './ui/chronicle.ts';
 import { mountLayout } from './ui/layout.ts';
+import { mountNewGame } from './ui/newGame.ts';
 import { mountRealmPanels } from './ui/realmPanels.ts';
-import { loadSave, saveRealm, startAutosave } from './storage/autosave.ts';
+import { SAVE_KEY, browserStorage, startAutosave } from './storage/autosave.ts';
+import { startGame } from './storage/game.ts';
 
 const root = document.getElementById('app');
 if (!root) throw new Error('#app missing');
 
+/** A seed from the platform's random source; Math.random is banned. */
+const randomSeed = () => crypto.getRandomValues(new Uint32Array(1))[0]!;
+
 // A saved realm resumes after replaying the time away since it was saved; with
-// none, or a bad one, a new run starts. Its seed comes from the platform's
-// random source; Math.random is banned.
-const saved = loadSave();
-let realm = saved
-  ? catchUp(saved.realm, saved.savedAt === null ? 0 : (Date.now() - saved.savedAt) / 1000)
-  : createRealm(crypto.getRandomValues(new Uint32Array(1))[0]!);
-// Stamp the replayed realm at once, so a crash before the next autosave can't replay it twice.
-if (saved) saveRealm(realm);
+// none, or a bad one, a new run starts on a random seed.
+const game = startGame({ store: browserStorage, now: Date.now, newSeed: randomSeed });
 // Battles the player starts roll on their own stream, seeded the same way.
-const battleRng = createRng(crypto.getRandomValues(new Uint32Array(1))[0]!);
+const battleRng = createRng(randomSeed());
 
 // Dev builds only: ?speed=1|5|20 runs game time faster for testing.
 const speed = import.meta.env.DEV
@@ -31,14 +30,16 @@ const layout = mountLayout(root);
 const renderPanels = mountRealmPanels(
   layout,
   (change) => {
-    realm = change(realm);
-    // Save each action at once, so a reload can't undo a lost battle.
-    saveRealm(realm);
-    render(realm);
+    game.act(change);
+    render(game.realm);
   },
   battleRng,
 );
 const renderChronicle = mountChronicle(layout.tabs.chronicle);
+const renderNewGame = mountNewGame(layout, () => {
+  game.newGame();
+  render(game.realm);
+});
 
 if (speed > 1) {
   const note = document.createElement('p');
@@ -49,21 +50,27 @@ if (speed > 1) {
 function render(next: Realm): void {
   renderPanels(next);
   renderChronicle(next);
+  renderNewGame(next);
 }
 
 // Fixed-step loop: real time (scaled by speed) accumulates and the simulation
 // consumes it in whole STEP-sized ticks, whatever the frame rate. A background
 // tab gets no frames, so its return is one long gap, replayed as time away.
-let pending = 0;
 let last = performance.now();
 
 function frame(now: number): void {
-  ({ realm, pending } = play(realm, pending, (now - last) / 1000, speed));
+  game.frame((now - last) / 1000, speed);
   last = now;
-  render(realm);
+  render(game.realm);
   requestAnimationFrame(frame);
 }
 
-startAutosave(() => realm);
-render(realm);
+// Autosave reads the game's realm when it runs, so after a new game it saves the new one.
+startAutosave(() => game.save());
+// A new game started in another tab replaces this tab's realm, so this tab's
+// autosave can't write the old run back over it.
+addEventListener('storage', (e) => {
+  if (e.key === SAVE_KEY) game.sync();
+});
+render(game.realm);
 requestAnimationFrame(frame);

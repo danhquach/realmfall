@@ -96,6 +96,28 @@ it empties.
   the realm does not grow. Food output is not reduced, so starvation can't feed
   on itself.
 
+### Fallen realm
+
+A realm with no one left has fallen, and the run is over.
+
+- **When:** the population is 0: no idle peasants, no workers and no
+  soldiers (later also no recruits in training, wagons or armies in the
+  field). While anyone at all is left, a lone soldier included, the realm
+  stands.
+- **The realm stands still:** from the moment it falls, time stops for it.
+  No growth, raids, events, rival growth or offline progress, and it takes no
+  more player actions. Nothing can bring it back.
+- **Chronicle:** one line, "Hearthmoor has fallen: everyone has left." (kind
+  Realm, §12), written once when it falls. Reloads, offline catch-up and a
+  background tab coming back never write it again, and a realm that had
+  already fallen gets no "Away" line. A realm that falls while away stops
+  there; its "Away" line covers the time up to the fall.
+- **Notice:** from the first frame the realm is fallen (also right after a
+  load or offline catch-up), a notice under the status bar says "Hearthmoor
+  has fallen." with a **Start a new game** button (§14). The Build, Army,
+  Rivals and Traits panels are locked and dimmed; the Chronicle stays
+  readable.
+
 ## 5. Buildings
 
 Building more of something and upgrading something are different:
@@ -822,6 +844,7 @@ lines stay in the Chronicle and count toward its 200-line cap.
 | Buildings | Construction orders started, finished and cancelled           |
 | Traits    | Trait gains, duplicates, slots, swaps, upgrades and sales     |
 | Away      | The offline progress summary (§14)                            |
+| Realm     | The realm's fall (§4)                                         |
 
 ## 13. Known issues from the prototype
 
@@ -901,6 +924,18 @@ Ordered by how much they add to the endless loop:
    play, without a line. Construction and training (§5, §6) advance in the
    same steps, and the summary lists the buildings finished and units trained
    while away.
+
+   **New game.** A **New game** button in the status bar (and the fallen
+   notice's **Start a new game**, §4) asks first, in the page: "Start a new
+   game? Hearthmoor and its save will be lost." with **Start new game** and
+   **Cancel** (focused first; Esc also cancels). Cancel changes nothing.
+   Confirming removes the save and starts the starting realm (§3) on a new
+   random seed, saved at once, so the next load opens it. The same seed
+   always gives the same starting realm. Only the save is cleared: the last
+   tab used (§18) is a view setting, not part of the run, and is kept. The
+   autosave always writes the realm on show, so it can't put the old run
+   back; another open tab picks up the new game the moment it is saved, for
+   the same reason.
 2. **Bigger trait pool and trait synergies.** More traits per tier, and some
    pairs of slotted traits combine into a stronger effect (e.g. Dwarven smiths
    + Horse lords → Ironclad cavalry).
@@ -957,7 +992,11 @@ panel's text is the same wherever it sits.
 
 - **Status bar** across the top: the realm's name, the year, every store with
   its cap and rate, and population with idle peasants. It is on screen on every
-  tab and while Goals is open. The **Goals** button sits at its right end.
+  tab and while Goals is open. The **New game** (§14) and **Goals** buttons
+  sit at its right end.
+- **Notices** sit under the status bar, above the workspace: the New game
+  question (§14) and the fallen realm (§4). With none on show they take no
+  room.
 - **Goals dropdown:** starts closed, also after a reload. The button opens it
   right under itself, right-aligned, over the Chronicle and the right edge of
   the tabs; opening or closing it never changes the tab or scrolls anything.

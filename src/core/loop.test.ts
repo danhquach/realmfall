@@ -88,12 +88,13 @@ describe('advance', () => {
 });
 
 /**
- * A run with no farmers, a Barracks, a soldier and a hostile rival: wood hits
- * its cap, food runs out, raids land.
+ * A run with one farmer, a Barracks, a soldier and a hostile rival: wood hits
+ * its cap, food runs out, raids land. The farmer is too few to feed the rest
+ * but outlasts them, so the realm never falls (§4) and keeps running.
  */
 function busy(seed: number): Realm {
   const realm = createRealm(seed);
-  const jobs = { farmer: 0, woodcutter: 8, miner: 1, builder: 0 };
+  const jobs = { farmer: 1, woodcutter: 7, miner: 1, builder: 0 };
   const stores = { food: 50, wood: 190, iron: 20, gold: 100, weapons: 0 };
   const rivals = realm.rivals.map((r, i) => ({ ...r, hostile: i === 0 }));
   const buildings = { ...realm.buildings, barracks: 1 };
